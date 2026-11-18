@@ -5,15 +5,15 @@
  *
  * ## The property, and why it is the caller's property and not an implementation detail
  *
- * `POST /stacks/:stackId/documents/:doc_id/ingest` runs its eight stages across three
- * short transactions, because no transaction may be open while a provider is called.
- * The answer belongs to the LAST of them: today the pipeline writes the 200 from
- * inside the callback it hands to the runner, so the client receives its
- * `IngestionResult` while that transaction is still open and its COMMIT is still
- * pending. A caller that acts on a 200 — a follow-up statement, a retry trigger, a
- * second request — can therefore observe pre-commit state, and a 200 can even be
- * delivered for a write that later rolls back. Both are visible from the socket, so
- * both are properties this file asserts, not internals it pokes at.
+ * `POST /stacks/:stackId/documents/:doc_id/ingest` is phase one: it reads the document,
+ * chunks and embeds it with no transaction open (S44), and stores the chunk rows in one
+ * short write transaction. The answer belongs to that LAST boundary: the pipeline builds
+ * its payload inside the callback it hands to the runner, so the client receives its
+ * `IngestionResult` only after the transaction it describes has committed. A caller that
+ * acts on a 200 — a compile, a follow-up statement, a retry trigger — can therefore
+ * never observe pre-commit state, and a 200 can never be delivered for a write that
+ * later rolls back. Both are visible from the socket, so both are properties this file
+ * asserts, not internals it pokes at.
  *
  * ## Why a GATED runner instead of timing
  *
@@ -42,10 +42,10 @@
  * post-engagement window meaningful, because from that instant the continuation is
  * provably paused.
  *
- * The gate watches the pipeline's THIRD boundary onward, which is the last one today
+ * The gate watches the pipeline's SECOND boundary onward, which is the last one today
  * and is documented as such at the top of `pipeline.ts`. Gating from the first call
- * instead would hold the READ stage and prove nothing; gating `>= 3` keeps the property
- * honest if a fourth stage is added later.
+ * instead would hold the READ stage and prove nothing; gating `>= 2` keeps the property
+ * honest if a third stage is added later.
  *
  * ## Why the whole success shape is asserted, not just the status
  *
@@ -57,7 +57,9 @@
  * check that the replay-after-COMMIT path still produces the same nine-key wire shape.
  *
  * Every provider answer is scripted (`core/extraction-harness.js`), and no classifier is
- * configured, so nothing here reaches a network and no decision client is involved.
+ * configured, so nothing here reaches a network and no decision client is involved. The
+ * only provider calls phase one makes are the chunk embeddings; the extraction model is
+ * never asked.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,7 +83,7 @@ import { createRequireApiKey } from "../../auth.js";
 import { parseConfig } from "../../config.js";
 import { createRequestTransactionWrapper, createTransactionRunner } from "../../db.js";
 import type { TransactionRunner } from "../../db.js";
-import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
+import { installFetchStub, uninstallFetchStub } from "../../core/extraction-harness.js";
 import { createIngestRouter } from "../ingest.js";
 import {
   createDocument,
@@ -96,20 +98,8 @@ import { IngestionResult } from "./models.js";
 
 useDomainPrefix("boundary");
 
-/** The document's prose; the triplet's endpoints are quoted from it verbatim. */
+/** The document's prose. */
 const BODY = "El Comité de Cambios ejecuta la gestión de cambios.";
-
-/** The model's whole answer: one triplet whose labels are in the default catalog. */
-const ANSWER = {
-  triplets: [
-    {
-      subject: { type: "role", name: "Comité de Cambios" },
-      relation: { type: "ejecuta" },
-      object: { type: "process", name: "Gestión de cambios" },
-    },
-  ],
-  entities: [],
-};
 
 /**
  * How long the client is given to answer once the gate is KNOWN to be engaged.
@@ -130,10 +120,12 @@ const ENGAGEMENT_TIMEOUT_MS = 15_000;
 /**
  * The first boundary whose COMMIT must precede the answer.
  *
- * `pipeline.ts` documents three short transactions; the third is the one that writes
- * the audit blob and produces the payload the response carries.
+ * Phase one opens exactly TWO: the read stage, then the write stage that stores the
+ * chunk rows and builds the payload. The second is the answer boundary, and the number
+ * is stated here rather than derived so that a stage being inserted or removed shows up
+ * as a deliberate edit to this test instead of as a silent pass.
  */
-const ANSWER_BOUNDARY = 3;
+const ANSWER_BOUNDARY = 2;
 
 /** One first-answer observation: the client was answered, or the window elapsed. */
 type FirstAnswer =
@@ -250,7 +242,6 @@ describe.skipIf(skipReason !== false)("ingest answers only after its transaction
   it("keeps the client unanswered until the last boundary resolves, then answers 200 (S3)", async () => {
     const stackId = await createStack();
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([ANSWER]);
     const gated = createGatedRunner(gate);
 
     // Started once, never awaited until the gate is released: `.then` here is what

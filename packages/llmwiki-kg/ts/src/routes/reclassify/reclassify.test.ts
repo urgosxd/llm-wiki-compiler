@@ -68,6 +68,7 @@ import {
   uninstallFetchStub,
 } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -213,11 +214,17 @@ async function bumpCatalog(stackId: string): Promise<void> {
   );
 }
 
-/** Ingests one document, with the model answering `payload`. */
+/**
+ * Ingests one document, with the model answering `payload`, then compiles it.
+ *
+ * Two phases: the ingest stores the chunks and the compile is what produces the
+ * candidates a reclassification pass later re-decides.
+ */
 async function ingest(app: Express, stackId: string, body: string, payload: unknown): Promise<string> {
   const documentId = await createDocument(stackId, body);
-  setToolResponse([payload]);
   await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  setToolResponse([payload]);
+  await request(app).post(compileUrl(stackId, documentId)).expect(200);
   return documentId;
 }
 

@@ -40,13 +40,14 @@ import { sql } from "drizzle-orm";
 
 import { createRequireApiKey } from "../../auth.js";
 import { parseConfig } from "../../config.js";
-import { createRequestTransactionWrapper } from "../../db.js";
+import { createRequestTransactionWrapper, createTransactionRunner } from "../../db.js";
 import { createIngestRouter } from "../ingest.js";
 import type { IngestRouterDependencies } from "../ingest.js";
 import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -79,7 +80,13 @@ function triplet(relation: string): unknown {
 function buildApp(): Express {
   const wrap = createRequestTransactionWrapper(database());
   const apiKey = createRequireApiKey(parseConfig({ AKS_API_KEY: "" }));
-  const deps: IngestRouterDependencies = { wrap, apiKey, decisions: () => undefined };
+  const deps: IngestRouterDependencies = {
+    wrap,
+    apiKey,
+    decisions: () => undefined,
+    // The compile phase always calls a provider, so it needs the bounded runner.
+    run: createTransactionRunner(database()),
+  };
 
   const app = express();
   app.use(express.json({ strict: false }));
@@ -98,6 +105,28 @@ async function createStack(app: Express, label: string): Promise<string> {
     .send({ name: `Converge ${label}`, domain: `${label}-${Date.now().toString(36)}` })
     .expect(201);
   return String(created.body.id);
+}
+
+/**
+ * Ingests one document and compiles it, which is the pair that produces the graph.
+ *
+ * Two phases in one call: ingest stores the document's chunks, and the compile reads
+ * them back and is what records evidence, edges and the collision history.
+ *
+ * @param app - The running app.
+ * @param stackId - The Stack that owns the document.
+ * @param documentId - The document to ingest and compile.
+ * @param answer - What the extraction model answers for that document.
+ */
+async function ingestAndCompile(
+  app: Express,
+  stackId: string,
+  documentId: string,
+  answer: unknown,
+): Promise<void> {
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  setToolResponse([answer]);
+  await request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
 /** How many evidence rows this Stack holds. */
@@ -138,10 +167,9 @@ describe.skipIf(skipReason !== false)("re-ingest keeps one evidence row per span
     const stackId = await createStack(app, "accumulate");
     const first = await createDocument(stackId, BODY_SPACED, "first.txt");
     const second = await createDocument(stackId, BODY_SNAKED, "second.txt");
-    setToolResponse([triplet("deja sin efecto"), triplet("deja_sin_efecto")]);
 
-    await request(app).post(ingestUrl(stackId, first)).expect(200);
-    await request(app).post(ingestUrl(stackId, second)).expect(200);
+    await ingestAndCompile(app, stackId, first, triplet("deja sin efecto"));
+    await ingestAndCompile(app, stackId, second, triplet("deja_sin_efecto"));
 
     // Two documents that state the same claim corroborate it: the second one adds its
     // own span and never replaces the first, so provenance keeps every source.
@@ -157,15 +185,15 @@ describe.skipIf(skipReason !== false)("re-ingest keeps one evidence row per span
   it("does not duplicate a candidate's evidence on a second ingest (S45.12)", async () => {
     const stackId = await createStack(app, "evidence");
     const documentId = await createDocument(stackId, BODY_SPACED);
-    setToolResponse([triplet("deja sin efecto"), triplet("deja sin efecto")]);
+    const answer = triplet("deja sin efecto");
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestAndCompile(app, stackId, documentId, answer);
     const afterFirst = await evidenceCount(stackId);
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestAndCompile(app, stackId, documentId, answer);
     const afterSecond = await evidenceCount(stackId);
 
     // Two entities and one relation, one textual row each. The same span judged
-    // again is the same evidence, not corroboration: a retried ingest must not
+    // again is the same evidence, not corroboration: a retried compile must not
     // inflate provenance into a count of attempts.
     expect(afterFirst).toBe(3);
     expect(afterSecond).toBe(afterFirst);
@@ -190,10 +218,9 @@ describe.skipIf(skipReason !== false)("two predicates folding onto one edge", ()
     const stackId = await createStack(app, "collision");
     const first = await createDocument(stackId, BODY_SPACED, "first.txt");
     const second = await createDocument(stackId, BODY_SNAKED, "second.txt");
-    setToolResponse([triplet("deja sin efecto"), triplet("deja_sin_efecto")]);
 
-    await request(app).post(ingestUrl(stackId, first)).expect(200);
-    await request(app).post(ingestUrl(stackId, second)).expect(200);
+    await ingestAndCompile(app, stackId, first, triplet("deja sin efecto"));
+    await ingestAndCompile(app, stackId, second, triplet("deja_sin_efecto"));
 
     const edges = await withFixtureTenant(database(), { stackId }, (tx) =>
       tx.execute<{ type: string; predicate: string | null; identity_key: string }>(sql`

@@ -5,19 +5,15 @@
  *
  * ## Why this module exists
  *
- * The KG pipeline is being split the way the wiki already is: an ingest STORES a
- * document's chunks, and a compile READS those chunks and runs the LLM pipeline over
- * them. {@link compileChunks} is the seam that makes that split a move rather than a
- * rewrite, because it no longer produces its own chunks. The same function therefore
- * serves both phases:
+ * The KG pipeline is split the way the wiki already is: an ingest STORES a document's
+ * chunks, and a compile READS those chunks and runs the LLM pipeline over them.
+ * {@link compileChunks} is the seam that makes that split a move rather than a rewrite,
+ * because it does not produce its own chunks: the compile route hands it the rows read
+ * back out of `document_chunks` (`document_id, stack_id, chunk_index, content`).
  *
- * - today, `ingestDocument` (pipeline.ts) calls it with the chunks `chunkAndEmbed`
- *   just produced, straight from memory;
- * - afterwards, the compile route calls it with the rows read back out of
- *   `document_chunks` (`document_id, stack_id, chunk_index, content`).
- *
- * Nothing else about the function changes between the two: the extraction prompt,
- * the persistence, the classification and the audit are the same code either way.
+ * Phase one (`pipeline.ts`) does not call it at all. Its only work is chunking,
+ * embedding and writing `document_chunks`, which it does through {@link persistChunks}
+ * — the same upsert, over the same columns, against the same conflict target as before.
  *
  * ## What this module may read from a chunk
  *
@@ -28,25 +24,27 @@
  * offsets into that string (`candidates.ts`).
  *
  * The fields a chunk carries only because it came from memory — `embedding`,
- * `tokenCount`, `contentHash`, `chunkerStrategy` — are read by exactly one place
- * here: {@link persistChunks}, which writes the rows a run was handed. Whether that
- * write happens at all is the caller's explicit decision, `writeChunkRows`: the ingest
- * phase has just produced those columns and passes `true`, while a run over stored
- * chunks passes `false` because it has no such values and must not invent them.
+ * `tokenCount`, `contentHash`, `chunkerStrategy` — are written by exactly one place
+ * here: {@link persistChunks}, which phase one calls with the rows `chunkAndEmbed` just
+ * produced. This seam never writes a chunk row: the chunks it is handed were READ BACK
+ * from `document_chunks` and hold no embedding, token count or hash, so rewriting those
+ * columns with placeholders would corrupt stored rows. Persisting chunks lives in this
+ * module only because phase one's write is the same upsert, against the same columns and
+ * the same conflict target.
  *
  * ## The stages that live here, and the transactions around them
  *
  * 1. provider stage — extraction (`extractGraphFromChunks`) and the optional
  *    description synthesis. NO transaction is open, so no connection is held across
  *    an external call (S44).
- * 2. WRITE — `prepareIngest`: the chunk rows, identity resolution, the evidence spans
- *    and the `pending` candidate rows, committed BEFORE the first classifier call.
+ * 2. WRITE — `prepareIngest`: identity resolution, the evidence spans and the
+ *    `pending` candidate rows, committed BEFORE the first classifier call.
  * 3. decision stage — the support questions and then the classification questions,
  *    again with nothing open.
  * 4. WRITE — the classification persistence, and whatever the caller's `commitWith`
  *    step adds. It runs in the SAME transaction on purpose: a caller that writes its
  *    own audit blob there keeps it atomic with the decisions that describe it, which
- *    is the shape the ingest route has today.
+ *    is the shape the compile route has.
  */
 
 import { sql } from "drizzle-orm";
@@ -193,13 +191,16 @@ export interface PreparedIngest {
 }
 
 /**
- * Everything every compile run is given, whichever phase is calling it.
+ * Everything one compile run is given.
  *
  * The chunks arrive as an argument — that is the whole point of the seam — and the
- * rest is the context a run needs to persist, classify and report.
+ * rest is the context a run needs to persist, classify and report. There is no
+ * `writeChunkRows` flag: this seam compiles chunks that are ALREADY stored and never
+ * writes one, because the rows it receives carry no embedding, token count or hash to
+ * write. Phase one owns the chunk write ({@link persistChunks}).
  */
-interface CompileRequestBase<TCommitted> {
-  /** The document's chunks, in order: in memory today, read back from storage later. */
+export interface CompileChunksRequest<TCommitted> {
+  /** The document's chunks, in order, read back from `document_chunks`. */
   readonly chunks: readonly CompileChunk[];
   /** What the read stage resolved: the document row, the catalog and the truncation fact. */
   readonly input: CompileInput;
@@ -214,8 +215,8 @@ interface CompileRequestBase<TCommitted> {
    * classification.
    *
    * It exists so a caller can keep its audit write atomic with the decisions that
-   * describe it — the ingest route writes its audit blob and builds its payload
-   * there. The compile phase passes its own step for the same reason.
+   * describe it — the compile route writes its audit blob and builds its payload
+   * there.
    */
   readonly commitWith: (
     tx: Database,
@@ -223,40 +224,6 @@ interface CompileRequestBase<TCommitted> {
     classification: ClassificationAudit,
   ) => Promise<TCommitted>;
 }
-
-/**
- * A run that WRITES the chunk rows it was handed: the ingest phase.
- *
- * `chunks` is narrowed to the full {@link ChunkResult} here because ingest has just
- * produced those columns from the body — the embedding included — so the write needs
- * nothing it does not already hold.
- */
-export interface ChunkWritingCompileRequest<TCommitted>
-  extends CompileRequestBase<TCommitted> {
-  /** Stated, never defaulted: this run persists the chunk rows it is given. */
-  readonly writeChunkRows: true;
-  /** The chunks ingest just produced, embedding and all. */
-  readonly chunks: readonly ChunkResult[];
-}
-
-/**
- * A run over chunks that are ALREADY stored: the compile phase.
- *
- * It declares `writeChunkRows: false` because it read `document_id, stack_id,
- * chunk_index, content` back from `document_chunks` and holds no embedding, token count
- * or hash for them. Rewriting those columns with placeholders would corrupt stored
- * rows, so the write is skipped rather than faked.
- */
-export interface StoredChunksCompileRequest<TCommitted>
-  extends CompileRequestBase<TCommitted> {
-  /** Stated, never defaulted: this run persists no chunk row at all. */
-  readonly writeChunkRows: false;
-}
-
-/** Everything one compile run is given, discriminated by whether it writes chunk rows. */
-export type CompileChunksRequest<TCommitted> =
-  | ChunkWritingCompileRequest<TCommitted>
-  | StoredChunksCompileRequest<TCommitted>;
 
 /** What one compile run produced, including whatever the caller's last step returned. */
 export interface CompiledChunks<TCommitted> {
@@ -271,39 +238,30 @@ export interface CompiledChunks<TCommitted> {
 /**
  * Turns one document's CHUNKS into graph rows: extract, persist, classify, persist.
  *
- * This is the phase-2 seam. It takes the chunks it processes instead of producing
- * them, so the identical code runs twice in the product's life: during ingest, fed
- * the chunks `chunkAndEmbed` just produced from the document body, and during compile,
- * fed the rows read back from `document_chunks`. It never touches the document body
- * and never chunks anything, which is why a compile needs no original file.
+ * This is the phase-two seam. It takes the chunks it processes instead of producing
+ * them, so a compile needs no original document body: the compile route reads the
+ * stored rows and hands them over, and nothing here ever chunks anything.
  *
  * It performs, in this order, with the transaction boundaries written down in the
  * module header: `extractGraphFromChunks`, the optional `synthesizeEntityDescriptions`,
- * the chunk and candidate persistence (identity resolution, evidence spans, `pending`
- * entities and relationships with their consolidation), classification when a runtime
- * is configured, and the classification persistence.
+ * the candidate persistence (identity resolution, evidence spans, `pending` entities and
+ * relationships with their consolidation), classification when a runtime is configured,
+ * and the classification persistence.
  *
  * @param request - The chunks, the resolved context, the request, the runner and the
- *   caller's last step, discriminated by whether this run writes chunk rows.
+ *   caller's last step.
  * @returns The prepared run, its audit section, and what `commitWith` returned.
  */
 export async function compileChunks<TCommitted>(
   request: CompileChunksRequest<TCommitted>,
 ): Promise<CompiledChunks<TCommitted>> {
   const { chunks, input, params, run, classification, commitWith } = request;
-  // Read ONCE, before any transaction opens: the only caller that has full rows is the
-  // one that declared it writes them, and this is the guard that proves it to the
-  // writer. `undefined` means "these chunks are already stored".
-  const chunkRows: readonly ChunkResult[] | undefined = request.writeChunkRows
-    ? request.chunks
-    : undefined;
   // Provider stage: extraction, and the synthesis when it is asked for. No
   // transaction is open here, and none is opened until the extraction succeeded.
   const processed = await extractAndSynthesize(params, chunks, input.document);
-  // Candidate write, committed BEFORE the first classifier call.
-  const prepared = await run((tx) =>
-    prepareIngest(tx, { params, input, chunkRows }, processed),
-  );
+  // Candidate write, committed BEFORE the first classifier call. The chunks are already
+  // stored, so this writes graph rows and nothing else.
+  const prepared = await run((tx) => prepareIngest(tx, { params, input }, processed));
   // Decision stage: the support questions, then the classification questions.
   const outcome =
     classification === undefined ? undefined : await classifyDocument(prepared, classification);
@@ -554,27 +512,18 @@ interface PrepareRequest {
   readonly params: IngestParams;
   /** What the read stage resolved. */
   readonly input: CompileInput;
-  /**
-   * The full chunk rows to persist, or `undefined` when they are already stored.
-   *
-   * This is {@link ChunkWritingCompileRequest.writeChunkRows} after the discriminant
-   * has been read: a value here means the caller declared it writes chunk rows and
-   * holds the columns that write needs.
-   */
-  readonly chunkRows: readonly ChunkResult[] | undefined;
 }
 
 /**
  * The evidence stage plus the `pending` rows, in one short write transaction.
  *
- * The chunk rows are written HERE, and only when the run declared it writes them,
- * rather than beside the extraction that produced them: that extraction ran with no
- * transaction open, and writing afterwards is what keeps the provider call out of the
- * transaction (S44). The candidate rows are written as `pending`, committed, and only
- * then is a classifier asked anything.
+ * No chunk row is written here, and none is written anywhere else in this seam: the
+ * chunks were stored by phase one and this run holds only `content` and `chunkIndex` for
+ * them. The candidate rows are written as `pending`, committed, and only then is a
+ * classifier asked anything.
  *
  * @param tx - The transaction the runner opened.
- * @param request - The validated request, what the read stage resolved, and the rows to write.
+ * @param request - The validated request and what the read stage resolved.
  * @param processed - What the provider stage produced.
  * @returns Everything the classification stages need.
  */
@@ -583,11 +532,7 @@ async function prepareIngest(
   request: PrepareRequest,
   processed: ProcessedIngest,
 ): Promise<PreparedIngest> {
-  const { params, input, chunkRows } = request;
-  // A run over stored chunks holds no embedding, token count or hash, so it writes no
-  // chunk row: `document_chunks` already has them, and re-inserting placeholders would
-  // destroy stored data.
-  if (chunkRows !== undefined) await persistChunks(tx, chunkRows);
+  const { params, input } = request;
   const identityKeys = resolveIdentityKeys(
     processed.extraction,
     await loadKnownIdentities(tx, params.stackId),
@@ -642,12 +587,15 @@ export async function persistChunks(
 /**
  * Writes one chunk.
  *
+ * Module-private: phase one's chunk write goes through {@link persistChunks}, and nothing
+ * outside this module writes a chunk row.
+ *
  * pgvector's accepted text form is `[1,2,3]`. It must be passed as a string and
  * cast explicitly: handing postgres-js the JavaScript array makes it expand into a
  * 768-placeholder row constructor, which Postgres rejects as a type error rather
  * than coercing to `vector`.
  */
-export async function upsertChunk(tx: Database, chunk: ChunkResult): Promise<void> {
+async function upsertChunk(tx: Database, chunk: ChunkResult): Promise<void> {
   await tx.execute(sql`
     insert into document_chunks (
       document_id, stack_id, chunk_index, content,

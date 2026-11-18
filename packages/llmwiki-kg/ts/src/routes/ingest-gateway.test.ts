@@ -9,7 +9,7 @@ import request from "supertest";
 import { RESPONSE_KEYS, useDomainPrefix } from "./ingest-harness.js";
 
 import { sql } from "drizzle-orm";
-import { createDocument, createStack, createTestApp, database, deleteFixtureRows, ingestUrl, state } from "./ingest-harness.js";
+import { createDocument, compileUrl, createStack, createTestApp, database, deleteFixtureRows, ingestUrl, state } from "./ingest-harness.js";
 
 // This file owns its own domain namespace: the split suites run in parallel
 // against one database and the cleanup deletes by prefix.
@@ -19,10 +19,10 @@ useDomainPrefix("gateway");
  * The one block that spends money.
  *
  * Enabled only with `AKS_TEST_GATEWAY=1`, so an ordinary `npm test` (including
- * the 420 pre-existing tests) never calls a provider. When enabled it ingests one
- * small document twice, which is the minimum needed to observe the consolidation
- * contract: `relationships_written` counts attempts and stays flat, while
- * `relationships_in_stack` reflects real row growth.
+ * the 420 pre-existing tests) never calls a provider. When enabled it ingests and
+ * compiles one small document twice, which is the minimum needed to observe the
+ * consolidation contract: the extraction counters stay flat across the second pair,
+ * while `entities_in_stack` reflects the rows the compiles actually wrote.
  */
 describe.skipIf(state.skipReason !== false || process.env["AKS_TEST_GATEWAY"] !== "1")(
   "ingest (live gateway)",
@@ -55,7 +55,13 @@ describe.skipIf(state.skipReason !== false || process.env["AKS_TEST_GATEWAY"] !=
       // At least one chunk was embedded and stored.
       expect(first.body.chunks_created).toBeGreaterThanOrEqual(1);
 
+      // Phase two reads exactly the chunks phase one stored: a compile is defined on
+      // stored rows and creates none of its own.
+      const firstCompile = await request(app).post(compileUrl(stackId, documentId)).expect(200);
+      expect(firstCompile.body.chunks_read).toBe(first.body.chunks_created);
+
       const second = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+      const secondCompile = await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
       // The consolidation contract: the chunk count is stable (the upsert
       // rewrites in place), and the entity total does not grow, while the
@@ -63,7 +69,8 @@ describe.skipIf(state.skipReason !== false || process.env["AKS_TEST_GATEWAY"] !=
       // first did not. `relationships_written` counts attempts, so it is
       // whatever the second run extracted.
       expect(second.body.chunks_created).toBe(first.body.chunks_created);
-      expect(second.body.entities_in_stack).toBe(first.body.entities_in_stack);
+      expect(secondCompile.body.entities_in_stack).toBe(firstCompile.body.entities_in_stack);
+      expect(secondCompile.body.chunks_read).toBe(firstCompile.body.chunks_read);
 
       // Stored rows prove no duplication: one chunk per index, one entity per
       // name, no duplicate edges.

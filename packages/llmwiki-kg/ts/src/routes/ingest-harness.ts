@@ -28,6 +28,7 @@ import {
   createClient,
   createDatabase,
   createRequestTransactionWrapper,
+  createTransactionRunner,
 } from "../db.js";
 import type { Database } from "../db.js";
 import { noDatabase } from "../testing/no-database.js";
@@ -204,6 +205,9 @@ export function createTestApp(): Express {
     wrap: createRequestTransactionWrapper(database()),
     // Open mode: auth is a separate, already-verified surface.
     apiKey: createRequireApiKey(parseConfig({ AKS_API_KEY: "" })),
+    // The compile route always calls a provider, so it refuses a deployment with no
+    // bounded runner rather than holding the request transaction across the call.
+    run: createTransactionRunner(database()),
   };
 
   const app = express();
@@ -273,6 +277,24 @@ export async function createDocument(
 
 export function ingestUrl(stackId: string, documentId: string, query = ""): string {
   return `/stacks/${stackId}/documents/${documentId}/ingest${query}`;
+}
+
+/**
+ * The compile route of one document: the SECOND phase, which reads a document's stored
+ * chunks and runs the LLM pipeline over them.
+ *
+ * A test that asserts on graph rows calls both, in this order — ingest stores a
+ * document's chunks, compile turns them into entities, relationships, evidence and
+ * decisions. Spelled here rather than as a literal in every suite so the one route path
+ * has one home.
+ *
+ * @param stackId - The Stack that owns the document.
+ * @param documentId - The document to compile.
+ * @param query - The same per-request overrides ingest accepts.
+ * @returns The route path, ready for a supertest `post`.
+ */
+export function compileUrl(stackId: string, documentId: string, query = ""): string {
+  return `/stacks/${stackId}/documents/${documentId}/compile${query}`;
 }
 
 /** The skip decision, re-exported so each split file can gate on it. */

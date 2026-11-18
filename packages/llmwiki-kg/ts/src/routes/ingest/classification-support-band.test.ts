@@ -93,6 +93,7 @@ import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -270,11 +271,12 @@ async function createStack(app: Express, label: string): Promise<string> {
   return String(created.body.id);
 }
 
-/** Ingests {@link ANSWER} into a fresh document and returns the response. */
+/** Ingests {@link ANSWER} into a fresh document, compiles it, and returns the response. */
 async function ingestAnswer(app: Express, stackId: string) {
   const documentId = await createDocument(stackId, BODY);
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
   setToolResponse([ANSWER]);
-  return request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  return request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
 /** Every entity row of one Stack, with the support and classification columns. */

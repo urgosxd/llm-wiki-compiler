@@ -44,6 +44,7 @@ import { createDocumentsRouter } from "../documents.js";
 import { createStacksRouter } from "../stacks.js";
 import { createIngestRouter } from "../ingest.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -178,11 +179,14 @@ describe.skipIf(skipReason !== false)("the audit reports whether a classifier is
 
   it("publishes configured:false and the type-filter consequence when no credential exists", async () => {
     const app = buildApp(() => undefined);
-    setToolResponse([{ triplets: [OUTSIDE_CATALOG] }]);
     const stackId = await createStack(app, "unconfigured");
     const documentId = await createDocument(stackId, BODY);
 
+    // Ingest stores the chunks; the compile is the phase that leaves candidates
+    // undecided, so it is the phase whose audit section is asserted.
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [OUTSIDE_CATALOG] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const classification = (await auditOf(app, stackId, documentId))["classification"];
     expect(classification).toMatchObject({
@@ -198,11 +202,12 @@ describe.skipIf(skipReason !== false)("the audit reports whether a classifier is
 
   it("warns, with a code and the consequence, when candidates were left unclassified", async () => {
     const app = buildApp(() => undefined);
-    setToolResponse([{ triplets: [OUTSIDE_CATALOG] }]);
     const stackId = await createStack(app, "warning");
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [OUTSIDE_CATALOG] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const classification = (await auditOf(app, stackId, documentId))["classification"] as {
       warnings: Array<{ code: string; message: string }>;
@@ -219,11 +224,12 @@ describe.skipIf(skipReason !== false)("the audit reports whether a classifier is
     // A clean document does not escape the consequence: without a classifier, even a
     // candidate whose proposal the catalog names stays unclassified.
     const app = buildApp(() => undefined);
-    setToolResponse([{ triplets: [IN_CATALOG] }]);
     const stackId = await createStack(app, "clean");
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_CATALOG] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const classification = (await auditOf(app, stackId, documentId))["classification"];
     expect(classification).toMatchObject({ configured: false });
@@ -242,10 +248,13 @@ describe.skipIf(skipReason !== false)("the audit reports whether a classifier is
       ]),
     );
     setToolResponse([{ triplets: [IN_CATALOG] }]);
+    setToolResponse([{ triplets: [IN_CATALOG] }]);
     const stackId = await createStack(app, "configured");
     const documentId = await createDocument(stackId, BODY);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_CATALOG] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const classification = (await auditOf(app, stackId, documentId))["classification"];
     expect(classification).toMatchObject({

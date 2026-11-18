@@ -60,6 +60,7 @@ import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -193,11 +194,17 @@ async function createStack(app: Express, label: string): Promise<string> {
   return String(created.body.id);
 }
 
-/** Ingests {@link ANSWER} into a fresh document and returns the response. */
+/**
+ * Ingests {@link ANSWER} into a fresh document, compiles it, and returns the response.
+ *
+ * Ingest stores the document's chunks; the COMPILE is the phase that extracts and
+ * classifies, so it is the phase every assertion in this file reads.
+ */
 async function ingestAnswer(app: Express, stackId: string) {
   const documentId = await createDocument(stackId, BODY);
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
   setToolResponse([ANSWER]);
-  const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  const response = await request(app).post(compileUrl(stackId, documentId)).expect(200);
   return { documentId, response };
 }
 
@@ -475,10 +482,14 @@ describe.skipIf(skipReason !== false)("ingest records evidence and classificatio
   it("updates the same row on a re-ingest instead of classifying a second one (S45.12)", async () => {
     const stackId = await createStack(app, "reingest");
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([ANSWER]);
+    const answer = [ANSWER];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
     const before = await entityRows(stackId);
 
+    // A re-ingest rewrites the chunks and forms nothing of its own: the rows the
+    // compile wrote are the ones that must survive it.
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
     const after = await entityRows(stackId);
 

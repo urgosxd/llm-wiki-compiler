@@ -56,10 +56,12 @@ import {
 import { JevProviderError } from "../../core/jev/types.js";
 import { createIngestRouter } from "../ingest.js";
 import type { IngestRouterDependencies } from "../ingest.js";
+import { MISSING_RUNNER_MESSAGE } from "./wiring.js";
 import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -129,6 +131,66 @@ function runtime(steps: readonly JevScriptStep[] = SCRIPT): ClassificationRuntim
   return { client: scriptedJevClient(steps), config: parseJevConfig({}) };
 }
 
+/**
+ * The wiring sentence the ingest route answers, spelled out ONCE here.
+ *
+ * It is the shared constant from `ingest/wiring.ts`, and that module's message is what
+ * `POST /stacks/:stackId/reclassify` answers with too. Asserting the literal text (and
+ * not only the constant) is what makes an accidental rewrite of the constant fail here
+ * instead of shipping quietly onto two endpoints.
+ */
+const MISSING_RUNNER_DETAIL =
+  "ingest classification requires a bounded transaction runner: pass `run: " +
+  "createTransactionRunner(database)` over your pool, or disable classification. " +
+  "Refusing to keep a database transaction open across classifier calls (S44).";
+
+/**
+ * Builds an app from a wiring that injects only `wrap` — no bounded runner.
+ *
+ * That combination is what the ingest route has always handled two ways: it runs the
+ * handler inside the request transaction when no classifier is configured, and refuses
+ * it when one is (S44). Neither shape may change without a test failing here.
+ *
+ * @param classification - The decision runtime the route would see, or absent.
+ * @returns The app, with errors rendered as the route's JSON detail.
+ */
+function wrapOnlyApp(classification?: ClassificationRuntime): Express {
+  const wrap = createRequestTransactionWrapper(database());
+  const apiKey = createRequireApiKey(parseConfig({ AKS_API_KEY: "" }));
+  const deps: IngestRouterDependencies = {
+    wrap,
+    apiKey,
+    ...(classification === undefined ? {} : { decisions: () => classification }),
+  };
+
+  const app = express();
+  app.use(express.json({ strict: false }));
+  app.use("/stacks", createStacksRouter({ wrap, apiKey }));
+  app.use(createIngestRouter(deps));
+  app.use((_req, res) => {
+    res.status(404).json({ detail: "Not Found" });
+  });
+  app.use(
+    (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ detail: message });
+    },
+  );
+  return app;
+}
+
+/** How many `document_chunks` rows one document holds. */
+async function storedChunks(stackId: string, documentId: string): Promise<number> {
+  const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
+    tx.execute<{ n: number }>(
+      sql`
+        select count(*)::int as n from document_chunks where document_id = ${documentId}
+      `,
+    ),
+  );
+  return rows[0]?.n ?? -1;
+}
+
 /** Builds an app with the production transaction shape over the fixture pool. */
 function buildApp(classification: ClassificationRuntime): Express {
   const wrap = createRequestTransactionWrapper(database());
@@ -165,11 +227,17 @@ async function createStack(app: Express, label: string): Promise<string> {
   return String(created.body.id);
 }
 
-/** Ingests {@link ANSWER} and returns the response. */
+/**
+ * Ingests {@link ANSWER} and compiles it, returning the compile response.
+ *
+ * The support and classification columns are written by the compile, which is the phase
+ * that asks the questions: an ingest alone stores chunks and asks nobody anything.
+ */
 async function ingestAnswer(app: Express, stackId: string) {
   const documentId = await createDocument(stackId, BODY);
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
   setToolResponse([ANSWER]);
-  return request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  return request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
 /** Every entity row of one Stack, with the two decision columns. */
@@ -322,5 +390,61 @@ describe.skipIf(skipReason !== false)("ingest asks the semantic-support question
       (row) => row.evidence_text === "Runbook",
     );
     expect(runbookEvidence.map((row) => row.evidence_kind)).toEqual(["textual"]);
+  });
+});
+
+/**
+ * The two wirings the ingest route has always accepted or refused, pinned.
+ *
+ * WHY THIS BLOCK EXISTS. `MISSING_RUNNER_MESSAGE` is shared with
+ * `POST /stacks/:stackId/reclassify`, so a rewrite of that one constant changes the
+ * refusal two endpoints answer for the same misconfiguration. And the `wrap`-only
+ * wiring is a SUPPORTED deployment shape — one request transaction, no bounded runner —
+ * which the route must keep answering 200 for rather than turning into a 500 that no
+ * caller asked for.
+ */
+describe.skipIf(skipReason !== false)("the ingest route's wiring shapes", () => {
+  beforeEach(async () => {
+    await deleteFixtureRows();
+    installFetchStub();
+  });
+
+  afterEach(async () => {
+    uninstallFetchStub();
+    await deleteFixtureRows();
+  });
+
+  it("runs an ingest through a `wrap`-only wiring and stores the chunks", async () => {
+    // The legacy deployment shape: a request-scoped wrapper and nothing else. Phase one
+    // makes one provider call (the embedding) with no transaction of its own, so the
+    // inline runner keeps the old single-transaction behaviour and the ingest answers.
+    const app = wrapOnlyApp();
+    const stackId = await createStack(app, "wrap-only");
+    const documentId = await createDocument(stackId, BODY);
+
+    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+
+    expect(response.body).toMatchObject({ document_id: documentId, chunks_created: 1 });
+    // The 200 is not enough on its own: the same request without a written chunk row
+    // would be a success that stored nothing.
+    expect(await storedChunks(stackId, documentId)).toBe(1);
+  });
+
+  it("refuses a wiring with a classifier but no bounded runner, naming the fix (S44)", async () => {
+    // A classifier enabled over a request-scoped transaction is the one combination
+    // that is refused rather than degraded: the transaction would stay open for the
+    // whole handler while the response told nobody.
+    const app = wrapOnlyApp(runtime());
+    const stackId = await createStack(app, "wrap-classifier");
+    const documentId = await createDocument(stackId, BODY);
+
+    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(500);
+
+    expect(response.body).toEqual({ detail: MISSING_RUNNER_DETAIL });
+    // The constant is the shared one, byte for byte — this is the assertion that a
+    // future rewording of the shared message cannot pass silently.
+    expect(MISSING_RUNNER_MESSAGE).toBe(MISSING_RUNNER_DETAIL);
+    // A refused wiring writes nothing: the handler never ran.
+    expect(await storedChunks(stackId, documentId)).toBe(0);
   });
 });

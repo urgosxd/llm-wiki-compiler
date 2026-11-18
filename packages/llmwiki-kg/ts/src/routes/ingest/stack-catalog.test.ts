@@ -1,6 +1,6 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/ingest/stack-catalog.test.ts
- * @description Which vocabulary an ingest actually classifies against (S14, S16).
+ * @description Which vocabulary a compile actually classifies against (S14, S16).
  *
  * WHY THIS FILE EXISTS. `core/catalog/stack-catalog.test.ts` proves the derivation is
  * right. This file proves the PIPELINE uses it, which is a different claim and the
@@ -8,6 +8,10 @@
  * column was classified against the shipped default catalog, so `COMPANY` — a type
  * the Stack itself declares — matched nothing while `Role` — a type the Stack never
  * declared — would have matched if the model had proposed it.
+ *
+ * The catalog is resolved and used by the COMPILE phase: an ingest stores chunks and
+ * never consults a vocabulary. Every case below therefore ingests and then compiles,
+ * and reads what the second phase decided.
  *
  * Four facts, all observable only through a request and the rows it writes:
  *
@@ -56,6 +60,7 @@ import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -206,14 +211,20 @@ async function stackColumns(stackId: string) {
   return rows[0];
 }
 
-/** Ingests {@link ANSWER} into a fresh document. */
+/**
+ * Ingests {@link ANSWER} into a fresh document, compiles it, and returns the response.
+ *
+ * The catalog is resolved by BOTH phases, but it is the compile that classifies against
+ * it, so the decision columns asserted below are the compile's.
+ */
 async function ingestAnswer(app: Express, stackId: string) {
   const documentId = await createDocument(stackId, BODY);
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
   setToolResponse([ANSWER]);
-  return request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  return request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
-describe.skipIf(skipReason !== false)("ingest classifies against the Stack's own catalog", () => {
+describe.skipIf(skipReason !== false)("the compile classifies against the Stack's own catalog", () => {
   let app: Express;
 
   beforeEach(async () => {
@@ -324,9 +335,13 @@ describe.skipIf(skipReason !== false)("ingest classifies against the Stack's own
       `),
     );
     const documentId = await createDocument(stackId, BODY);
+    // The catalog is a COMPILE concern: phase one stores the chunks and never resolves
+    // it, so a broken declaration cannot refuse an ingest and is caught by the phase
+    // that would have classified against it.
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
     setToolResponse([ANSWER]);
 
-    const response = await request(app).post(ingestUrl(stackId, documentId));
+    const response = await request(app).post(compileUrl(stackId, documentId));
 
     // A broken catalog raises with the offending field named. Silently classifying
     // against the default would attribute this Stack's decisions to a vocabulary

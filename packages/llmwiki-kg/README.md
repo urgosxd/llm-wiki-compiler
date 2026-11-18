@@ -130,15 +130,25 @@ curl -X POST http://localhost:8000/stacks/$STACK_ID/documents \
 
 Note the document `id` from the response.
 
-**4. Compile it:**
+**4. Store it, then compile it:**
+
+Two steps, the same shape the wiki uses: `ingest` stores the document's text as
+retrieval chunks, and `compile` runs the LLM pipeline over those stored chunks.
 
 ```bash
 export DOC_ID=<paste-document-id-here>
 
+# phase 1 — chunk and embed. No LLM call, and no graph rows.
 curl -X POST http://localhost:8000/stacks/$STACK_ID/documents/$DOC_ID/ingest
+
+# phase 2 — extract, classify and consolidate. This is the slow step (15-30 seconds).
+curl -X POST http://localhost:8000/stacks/$STACK_ID/documents/$DOC_ID/compile
 ```
 
-This is the slow step (15-30 seconds). It runs the full LLM pipeline. The response shows how many chunks were created, how many entities and relationships were extracted.
+The ingest response reports `chunks_created` and, by design, zero entities and zero
+relationships: an ingest that has not been compiled is the normal state, not an error.
+The compile response reports how many entities and relationships the model extracted
+from the stored chunks, and how many rows the Stack holds afterwards.
 
 **5. Query it in natural language:**
 
@@ -212,7 +222,8 @@ Practical recommendation: start with one Stack. If retrieval quality drops as yo
 |---|---|---|
 | Create and manage Stacks | `/stacks` (CRUD) | Each Stack is one compiled knowledge domain |
 | Upload documents | `POST /stacks/{id}/documents` | Hash-deduplicated; same content uploaded twice returns the same record |
-| Compile documents into knowledge | `POST /stacks/{id}/documents/{doc_id}/ingest` | Runs the LLM pipeline; idempotent on re-ingestion |
+| Store a document's text for retrieval | `POST /stacks/{id}/documents/{doc_id}/ingest` | Chunks and embeds only: no LLM call, no graph rows; idempotent on re-ingestion |
+| Compile documents into knowledge | `POST /stacks/{id}/documents/{doc_id}/compile` | Runs the LLM pipeline over the stored chunks; per document, explicit and on demand — nothing calls it automatically, and repeat compiles of an unchanged document do not change the graph |
 | Optionally synthesize rich descriptions | Stack setting or `?synthesize_descriptions=true` | One LLM call per entity. Off by default. |
 | List or filter compiled entities | `GET /aks/v1/entities` | Filter by type, confidence, scope |
 | Traverse the knowledge graph | `GET /aks/v1/traverse` | BFS from a starting entity, follows typed relationships |
@@ -246,8 +257,25 @@ POST   /stacks/{stackId}/documents               upload (multipart/form-data)
 GET    /stacks/{stackId}/documents               list documents in a Stack
 GET    /documents/{doc_id}                       fetch one
 DELETE /documents/{doc_id}                       delete (and remove file on disk)
-POST   /stacks/{stackId}/documents/{doc_id}/ingest     run the compilation pipeline
+POST   /stacks/{stackId}/documents/{doc_id}/ingest     store the document's chunks (no LLM call)
+POST   /stacks/{stackId}/documents/{doc_id}/compile    extract the graph from those chunks
 ```
+
+Ingest and compile are two separate phases, the same way the wiki works. `ingest` reads
+the file, chunks it, embeds each chunk and writes `document_chunks` — nothing else: no
+extraction call, no `ontology_entities` or `ontology_relationships` row, and an
+`entities_extracted` of `0` in the response. `compile` reads those stored chunks back and
+runs the LLM pipeline over them — extraction, the optional description synthesis and
+classification — then consolidates the result into the graph.
+
+The compile is per document and always explicit. No scheduler, no compile-on-upload, no
+background watcher and no lint triggers it; a Stack whose documents are ingested but not
+compiled is a normal Stack, with retrievable text and an empty graph for those documents.
+Compiling the same unchanged document again is safe: it adds no entity, no relationship
+and no chunk row, and changes no stored graph value (it does append to the classification
+log when a classifier is configured). A document whose source changed must be re-ingested
+before it is compiled again — nothing stored records which version of the text a chunk
+set was built from.
 
 ### AKS query interface (the spec-conformant surface)
 

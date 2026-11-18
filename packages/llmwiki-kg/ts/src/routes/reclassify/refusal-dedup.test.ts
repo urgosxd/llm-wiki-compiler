@@ -54,10 +54,11 @@ import {
 } from "../../core/jev/questions.js";
 import { createIngestRouter } from "../ingest.js";
 import type { IngestRouterDependencies } from "../ingest.js";
+import { MISSING_RUNNER_MESSAGE } from "../ingest/wiring.js";
 import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
-import { createDocument, database, deleteFixtureRows, ingestUrl, skipReason, useDomainPrefix } from "../ingest-harness.js";
+import { compileUrl, createDocument, database, deleteFixtureRows, ingestUrl, skipReason, useDomainPrefix } from "../ingest-harness.js";
 import type { ClassificationRuntime } from "../ingest/classify-stage.js";
 
 useDomainPrefix("refusal");
@@ -183,11 +184,19 @@ async function verifyRow(stackId: string, name: string): Promise<void> {
   );
 }
 
-/** Ingests one document, with the model answering {@link ANSWER}. */
+/**
+ * Ingests one document and compiles it, with the model answering {@link ANSWER}.
+ *
+ * Both phases are needed: the ingest stores the chunks and forms nothing, and the
+ * COMPILE is the phase that writes the candidates, the evidence and the decisions this
+ * file's sweeps then re-decide. The refusals below are therefore about rows a compile
+ * produced, which is the only shape in which the question can arise at all.
+ */
 async function ingest(app: Express, stackId: string): Promise<void> {
   const documentId = await createDocument(stackId, BODY);
-  setToolResponse([ANSWER]);
   await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  setToolResponse([ANSWER]);
+  await request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
 /** Every classification-log row of one Stack, oldest first. */
@@ -327,5 +336,54 @@ describe.skipIf(skipReason !== false)("a refusal is recorded once per version", 
       new_canonical_type: "Role",
       catalog_version: "3.0.0",
     });
+  });
+});
+
+/**
+ * The wiring sentence `POST /stacks/:stackId/reclassify` answers, spelled out here.
+ *
+ * It is the DEFAULT message of `IngestWiringError`, raised by the handler with no
+ * argument, so it is the shared constant in `ingest/wiring.ts` — and it is also what the
+ * ingest route answers for the same misconfiguration. The literal is asserted on
+ * purpose: the constant is read by two endpoints, and a reworded constant would change
+ * this route's contract without any test noticing if only the constant were compared.
+ */
+const MISSING_RUNNER_DETAIL =
+  "ingest classification requires a bounded transaction runner: pass `run: " +
+  "createTransactionRunner(database)` over your pool, or disable classification. " +
+  "Refusing to keep a database transaction open across classifier calls (S44).";
+
+describe.skipIf(skipReason !== false)("reclassify refuses a wiring with no bounded runner", () => {
+  it("answers the shared wiring sentence instead of opening a request transaction", async () => {
+    // A classifier IS configured and no bounded runner is: the exact combination that
+    // must be refused, because the sweep asks the classifier between its writes (S44).
+    const wrap = createRequestTransactionWrapper(database());
+    const apiKey = createRequireApiKey(parseConfig({ AKS_API_KEY: "" }));
+    const deps: IngestRouterDependencies = {
+      wrap,
+      apiKey,
+      decisions: () => runtime([]),
+    };
+    const app = express();
+    app.use(express.json({ strict: false }));
+    app.use(createIngestRouter(deps));
+    app.use((_req, res) => {
+      res.status(404).json({ detail: "Not Found" });
+    });
+    app.use(
+      (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+        const message = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ detail: message });
+      },
+    );
+
+    // Nothing is written and nothing is read: the refusal happens before the sweep, so
+    // the Stack id never has to exist.
+    const response = await request(app).post(reclassifyUrl("11111111-1111-1111-1111-111111111111"))
+      .expect(500);
+
+    expect(response.body).toEqual({ detail: MISSING_RUNNER_DETAIL });
+    // Byte-identical to the shared constant: one edit to `wiring.ts` moves both routes.
+    expect(MISSING_RUNNER_MESSAGE).toBe(MISSING_RUNNER_DETAIL);
   });
 });

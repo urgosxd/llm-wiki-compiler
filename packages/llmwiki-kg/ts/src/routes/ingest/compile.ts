@@ -19,7 +19,8 @@
  * The body of the document is irrelevant to phase two. Extraction reads `content` and
  * `chunkIndex` from each chunk and nothing else (`core/graph-extraction.ts`), and the
  * ingest phase already persisted those columns in `document_chunks` under
- * `on conflict (document_id, chunk_index) do update` (`pipeline.ts`, {@link persistChunks}).
+ * `on conflict (document_id, chunk_index) do update` (`compile-chunks.ts`,
+ * {@link persistChunks}), which is what phase one writes.
  * This route therefore:
  *
  * 1. loads the `stack_documents` row (`findDocument`) — no file read, no body;
@@ -28,9 +29,10 @@
  *    not fabricate a vector it never computed;
  * 3. resolves the Stack's catalog exactly as ingest does, before any provider call, so a
  *    broken catalog costs no request;
- * 4. hands those chunks to {@link compileChunks} with `writeChunkRows: false`, so the
- *    identical extraction, candidate, classification and consolidation code runs while
- *    the one step only ingest owns — writing the chunk rows — is skipped.
+ * 4. hands those chunks to {@link compileChunks}, so the identical extraction, candidate,
+ *    classification and consolidation code runs; the one step only ingest owns — writing
+ *    the chunk rows — is not part of that seam at all, because these chunks are already
+ *    stored and this route holds no embedding to write.
  *
  * ## The transaction shape
  *
@@ -46,10 +48,12 @@
  *
  * - an unknown Stack, and a document that is not in it — the ingest route's own 404
  *   wording, since `findDocument` joins the two and cannot tell them apart;
- * - a document that exists but has no stored chunks — `409`, naming both that it has not
- *   been ingested and that a compile reads stored chunks. `404` would conflate "never
- *   ingested" with "not stored", which S10 forbids; and a 200 with zero counts would be
- *   indistinguishable from a document that simply had nothing in it.
+ * - a document that exists but has no stored chunks — `409`, naming the precondition and
+ *   both causes it cannot separate, since a document ingested from empty or
+ *   whitespace-only text and a document never ingested are byte-identical in storage.
+ *   `404` would conflate "has no chunks" with "not stored", which S10 forbids; and a 200
+ *   with zero counts would be indistinguishable from a document that simply had nothing
+ *   in it.
  *
  * ## Compiling twice is safe (S4)
  *
@@ -90,25 +94,35 @@ import { stackTotals } from "./stack-totals.js";
 import { IngestWiringError } from "./wiring.js";
 
 /** The status a document with no stored chunks is refused with. */
-export const NEVER_INGESTED_STATUS = 409;
+const NO_STORED_CHUNKS_STATUS = 409;
 
 /**
- * The refusal a document that was never ingested earns, spelled once so a caller (and a
+ * The refusal a document with no stored chunks earns, spelled once so a caller (and a
  * test) reads the same sentence.
  *
- * It names BOTH facts on purpose: what is missing (`document_chunks` rows) and why the
- * route cannot proceed without them (a compile reads stored chunks and cannot invent
- * them). Either half alone leaves an operator guessing whether the document is missing,
- * the ingest failed, or the compile is broken.
+ * ## Why it names TWO causes and asserts neither
+ *
+ * Storage cannot tell the two apart. A document that was ingested but produced no chunk
+ * row looks exactly like one that was never ingested: `chunkAndEmbed` returns no chunks
+ * for empty or whitespace-only text, so phase one persists nothing, and nothing else
+ * records that an ingest ran. The refusal therefore states the precondition it really
+ * has — no stored chunks — and names both causes, instead of claiming "never ingested"
+ * about a document that WAS ingested, which S10 forbids.
+ *
+ * It also says why the route cannot proceed: a compile reads stored chunks and cannot
+ * invent them. Either half alone leaves an operator guessing whether the document is
+ * missing, the ingest failed, or the compile is broken.
  *
  * @param stackId - The Stack named in the path.
  * @param documentId - The document named in the path.
  * @returns The operator-facing sentence.
  */
-export function notIngestedDetail(stackId: string, documentId: string): string {
+export function noStoredChunksDetail(stackId: string, documentId: string): string {
   return (
-    `Document ${documentId} has not been ingested: it has no stored chunks in Stack ` +
-    `${stackId}. Compile reads the chunks the ingest route persists and cannot invent them.`
+    `Document ${documentId} has no stored chunks in Stack ${stackId}. Either it has not ` +
+    `been ingested yet, or its ingested content produced no chunks — an empty or ` +
+    `whitespace-only document persists no chunk rows. Compile reads the chunks the ingest ` +
+    `route persists and cannot invent them.`
   );
 }
 
@@ -196,7 +210,10 @@ async function loadCompileRead(
   }
   const chunks = await readStoredChunks(tx, params);
   if (chunks.length === 0) {
-    sendApiError(res, apiError(NEVER_INGESTED_STATUS, notIngestedDetail(params.stackId, params.docId)));
+    sendApiError(
+      res,
+      apiError(NO_STORED_CHUNKS_STATUS, noStoredChunksDetail(params.stackId, params.docId)),
+    );
     return undefined;
   }
   const catalog = await loadStackCatalog(tx, params.stackId);
@@ -260,7 +277,7 @@ async function finishCompile(
  * @param run - How this deployment opens a short transaction.
  * @param classification - The decision runtime, or `undefined` when unconfigured.
  */
-export async function compileDocument(
+async function compileDocument(
   req: Request,
   res: Response,
   run: TransactionRunner,
@@ -280,9 +297,8 @@ export async function compileDocument(
     input: read.input,
     params,
     run,
-    // The whole point of this phase being separate: these chunks are already stored, so
-    // this run writes none of them.
-    writeChunkRows: false,
+    // The chunks are already stored, so this seam writes none of them: it reads them,
+    // extracts, classifies and consolidates, which is the whole of phase two.
     ...(classification === undefined ? {} : { classification }),
     commitWith: (tx, prepared, report) => finishCompile(tx, prepared, report),
   });
@@ -293,10 +309,10 @@ export async function compileDocument(
 /**
  * Builds the handler, refusing a wiring that could hold a transaction across a provider.
  *
- * Unlike the ingest route there is no inline single-transaction fallback: ingest's
- * fallback exists for a legacy test shape that calls no provider, while this route ALWAYS
- * extracts. So an absent runner is a wiring defect and is answered as one, with a message
- * that names the fix rather than a transaction left open for the whole handler.
+ * Unlike the ingest route, whose refusal names the embeddings phase one makes, there is
+ * no second shape to fall back to here: a compile ALWAYS extracts and classifies, so an
+ * absent runner is a wiring defect and is answered as one, with a message that names the
+ * fix rather than a transaction left open for the whole handler.
  *
  * @param deps - Injected collaborators.
  * @returns The Express handler for the compile route.

@@ -1,19 +1,20 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/ingest/classification-wiring.test.ts
  * @description The three wiring facts the pipeline promises about classification:
- * an unconfigured classifier still ingests, a classifier with no bounded
- * transaction runner is refused loudly, and the classifier is never called with a
- * transaction open.
+ * an unconfigured classifier still ingests, a route that makes provider calls with no
+ * bounded transaction runner is refused loudly, and the classifier is never called with
+ * a transaction open.
  *
  * WHY THIS FILE EXISTS. Each of these can fail silently.
  *
  * - "No credential" could turn into a dropped candidate, a 500, or an invented
  *   `free_no_match`; the test pins that every candidate is stored as `pending` and
  *   the request answers 200 (S25).
- * - A caller that injects only a request-scoped wrapper would run the classifier
- *   inside an open transaction while the response told nobody. That combination is
- *   REFUSED with a named error instead of degraded, and this test pins the refusal
- *   so it cannot become a silent fallback.
+ * - A caller that injects only a request-scoped wrapper would run the classifier —
+ *   and, in phase one, the chunk embeddings — inside an open transaction while the
+ *   response told nobody. A route without a bounded runner is REFUSED with a named
+ *   error instead of degraded, and this test pins the refusal so it cannot become a
+ *   silent fallback.
  * - The bounded-transaction claim itself (S44) is proven rather than described: the
  *   scripted double inspects `pg_stat_activity` at the moment it is asked, and
  *   checks that the candidate rows stage 1 wrote are already COMMITTED — visible
@@ -66,8 +67,9 @@ import type { IngestRouterDependencies } from "../ingest.js";
 import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
-import { embeddingCalls, toolCalls } from "../../core/extraction-harness.js";
+import { toolCalls } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -268,12 +270,13 @@ describe.skipIf(skipReason !== false)("ingest without a configured classifier", 
   it("persists every candidate as pending and answers 200 (S25)", async () => {
     const stackId = await createStack(app, "disabled");
     const documentId = await createDocument(stackId, BODY);
+
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
     setToolResponse([ANSWER]);
+    const response = await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
-    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
-
-    // Nothing is dropped and nothing is invented: the extraction still produced
-    // four candidates and the graph holds four rows.
+    // Nothing is dropped and nothing is invented: the compile produced four
+    // candidates and the graph holds four rows, none of them decided.
     expect(response.body).toMatchObject({ entities_extracted: 3, relationships_extracted: 1 });
     const rowStates = await states(stackId);
     expect(rowStates).toHaveLength(4);
@@ -297,9 +300,10 @@ describe.skipIf(skipReason !== false)("ingest without a configured classifier", 
   it("never marks a row human-verified (S39)", async () => {
     const stackId = await createStack(app, "verified");
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([ANSWER]);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([ANSWER]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
       tx.execute<{ verified: boolean; source_kind: string; pipeline: string }>(sql`
@@ -331,9 +335,11 @@ describe.skipIf(skipReason !== false)("ingest classification wiring", () => {
     await deleteFixtureRows();
   });
 
-  it("refuses to classify without a bounded transaction runner (S44)", async () => {
-    // Classification enabled, no runner: the request-scoped wrapper would hold a
-    // transaction open across every classifier call. Refused, never degraded.
+  it("refuses to run without a bounded transaction runner (S44)", async () => {
+    // A runner is absent: phase one chunks and EMBEDS the document, so the
+    // request-scoped wrapper would hold a transaction open across those provider
+    // calls. Refused, never degraded. (The compile route refuses for the same
+    // reason and with its own message, because it always calls the model.)
     const runtime: ClassificationRuntime = {
       client: new ScriptedJevClient(SCRIPT),
       config: parseJevConfig({}),
@@ -360,20 +366,27 @@ describe.skipIf(skipReason !== false)("ingest classification wiring", () => {
       decisions: () => ({ client: probe, config: parseJevConfig({}) }),
     });
     const documentId = await createDocument(stackId, BODY);
+
+    // Phase one stores the chunks and asks nobody anything. The probe is installed
+    // AFTER it, so every moment recorded below belongs to the phase that is actually
+    // being measured: the compile, which extracts, writes the candidates and then
+    // classifies them.
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
     setToolResponse([ANSWER]);
     const providerProbe = installProviderProbe(stackId);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     // One probe per question: three support questions, then three entities and the
     // relation. Every one of them is an external call, so every one of them is a
     // moment at which no transaction may be open.
     expect(probe.probes).toHaveLength(7);
-    // And the EXTRACTION calls are covered too: the chunk embeddings and the
-    // completion request are provider calls like any other, so a transaction held
-    // across them is the same violation (S44).
+    // And the EXTRACTION call is covered too: the completion request is a provider
+    // call like any other, so a transaction held across it is the same violation
+    // (S44). The window holds exactly the compile's provider calls — one extraction
+    // completion and no embedding, because phase one already embedded the document.
     expect(toolCalls()).toBe(1);
-    expect(providerProbe.moments).toHaveLength(toolCalls() + embeddingCalls());
+    expect(providerProbe.moments).toHaveLength(toolCalls());
     expect(providerProbe.moments).toEqual(providerProbe.moments.map(() => "0"));
     // At EVERY one of those moments no connection of this database was sitting
     // `idle in transaction` — the state a request-scoped transaction would be in

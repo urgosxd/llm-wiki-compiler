@@ -40,6 +40,7 @@ import { createDocumentsRouter } from "./documents.js";
 import { createIngestRouter } from "./ingest.js";
 import { createStacksRouter } from "./stacks.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -164,11 +165,15 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     return String(created.body.id);
   }
 
-  /** Ingests the shared body into one Stack. */
+  /**
+   * Ingests the shared body into one Stack, then compiles it, and returns the COMPILE
+   * response — that is the phase whose counters describe what the graph now holds.
+   */
   async function ingest(stackId: string, triplets: readonly unknown[]) {
-    setToolResponse([{ triplets }]);
     const documentId = await createDocument(stackId, BODY);
-    return request(app).post(ingestUrl(stackId, documentId));
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets }]);
+    return request(app).post(compileUrl(stackId, documentId));
   }
 
   /** Entity names and types as the AKS query surface reports them. */
@@ -324,9 +329,10 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
   it("keeps the catalog mismatch visible in the document audit after the request ends", async () => {
     const stackId = await createStack(DECLARATION);
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([{ triplets: [ACME_ADA, GLOBEX_INITECH] }]);
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [ACME_ADA, GLOBEX_INITECH] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     // The by-id document read is Stack-scoped since main's `e3e3c0c`, so the path
     // carries the Stack. The bare `/documents/:id` form answers 404 by design.
@@ -352,11 +358,15 @@ describe.skipIf(skipReason !== false)("ingest to query, end to end", () => {
     // compile safe, and it is only observable end to end.
     const stackId = await createStack(DECLARATION);
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([{ triplets: [ACME_ADA] }, { triplets: [ACME_ADA] }]);
+    const answer = [{ triplets: [ACME_ADA] }];
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
     const before = await queriedEntities();
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     expect(await queriedEntities()).toEqual(before);
     expect(before).toHaveLength(2);

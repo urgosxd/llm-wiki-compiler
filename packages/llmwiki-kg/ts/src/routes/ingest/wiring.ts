@@ -1,12 +1,12 @@
 /**
  * @file packages/llmwiki-kg/ts/src/routes/ingest/wiring.ts
- * @description The one wiring defect the ingest paths refuse instead of tolerating:
- * a classifier with no bounded transaction runner.
+ * @description The one wiring defect the ingest and reclassification routes refuse
+ * instead of tolerating: a classifier with no bounded transaction runner.
  *
  * ## Why it is its own module
  *
  * Two routers need to refuse the same misconfiguration — the ingest endpoint, whose
- * pipeline would hold its request transaction open across every classifier call, and
+ * request transaction would otherwise be held open across the classifier's calls, and
  * the reclassification endpoint, which has no other transaction to open at all. The
  * message and the error type therefore live here, so both name the defect identically
  * and neither router has to import the other (which would close an import cycle).
@@ -17,6 +17,14 @@
  * middle. Once a classifier is enabled it is not: the transaction would sit open for the
  * whole handler while the response told nobody, which is exactly what S44 forbids. So
  * the combination fails loudly with a message that names the fix.
+ *
+ * ## Why this text is not a free rewording
+ *
+ * The sentence below is a caller-facing contract: `POST /stacks/:stackId/reclassify`
+ * raises this error with NO argument, so its 500 `detail` is exactly this string, and
+ * two suites pin the literal text. A route that needs different wording spells its own
+ * constant instead of editing this one — the compile route, which always calls a
+ * provider and has no classifier-only shape, does exactly that in `compile.ts`.
  */
 
 /** Message of the refusal a misconfigured wiring gets, spelled once. */

@@ -66,6 +66,7 @@ import { createRequestTransactionWrapper, createTransactionRunner } from "../db.
 import { createStacksRouter } from "./stacks.js";
 import { createIngestRouter } from "./ingest.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -193,6 +194,30 @@ function unconfiguredClassification(candidateCount: number): unknown {
   };
 }
 
+/**
+ * Ingests one document and then compiles it, which is the pair the graph needs.
+ *
+ * Ingest stores the document's chunks and forms no row; the compile reads those chunks
+ * back and is the phase whose contract decides what enters the graph and what the
+ * document's audit reports. Every assertion in this file reads that second phase.
+ *
+ * @param app - The running app.
+ * @param stackId - The Stack that owns the document.
+ * @param documentId - The document to ingest and compile.
+ * @param answer - What the extraction model answers, in chunk order.
+ * @returns The compile response.
+ */
+async function ingestThenCompile(
+  app: Express,
+  stackId: string,
+  documentId: string,
+  answer: readonly unknown[],
+) {
+  await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  setToolResponse(answer);
+  return request(app).post(compileUrl(stackId, documentId)).expect(200);
+}
+
 /** Every entity type actually written to the Stack's graph, sorted. */
 async function writtenEntityTypes(stackId: string): Promise<string[]> {
   const rows = await withFixtureTenant(database(), { stackId }, (tx) =>
@@ -235,11 +260,12 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
   });
 
   it("keeps triplets outside the declaration and preserves what the model proposed", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("mixed"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] },
+    ]);
 
     // Every candidate the sources support is KEPT, carrying the type and the
     // predicate the model proposed. `ALIEN_CONSTRUCT` and `ACQUIRED` are outside
@@ -255,11 +281,12 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     // yields every candidate it names — `COMPANY`/`PERSON`/`EMPLOYS` as well as
     // `ALIEN_CONSTRUCT` and `ACQUIRED` — and the mismatch is reported in the
     // document's audit instead of being silently discarded.
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("plain"));
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] },
+    ]);
 
     expect(await writtenEntityTypes(stackId)).toEqual(["ALIEN_CONSTRUCT", "COMPANY", "PERSON"]);
     expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
@@ -272,11 +299,10 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     // DEFAULT_RELATIONS, so this is the test that fails if anyone "simplifies"
     // the default back to those lists. The tool schema stays byte-identical
     // either way, which is exactly why the swap looks safe and is not.
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
     const stackId = await createStackWith(app, domain("defaults"));
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [IN_ONTOLOGY] }]);
 
     expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
     expect(await writtenRelationTypes(stackId)).toEqual(["EMPLOYS"]);
@@ -288,10 +314,9 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     // the pipeline names the open contract at its call site. The FUNCTION's
     // default is still `strict`, so a caller that asks for nothing keeps the
     // oracle-parity behaviour and a closed graph on request.
-    setToolResponse([{ triplets: [BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("contract"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [BAD_ENTITY] }]);
     expect(await writtenEntityTypes(stackId)).toContain("ALIEN_CONSTRUCT");
 
     const chunks = [chunk(0, BODY)];
@@ -310,12 +335,12 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
   it("shows the declared types in the tool schema the model is given", async () => {
     // Enforcement is two-sided: the model is told the allowed types AND the
     // parser drops what ignores them. This asserts the first half, which a
-    // stored-then-ignored declaration would silently fail.
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    // stored-then-ignored declaration would silently fail. The model is prompted by the
+    // COMPILE phase, so the tool schema read below is the one that phase was given.
     const stackId = await createStackWith(app, domain("schema"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [IN_ONTOLOGY] }]);
 
     const { recorded } = await import("../core/extraction-harness.js");
     const chat = recorded.filter((entry) => entry.url.endsWith("/chat/completions")).at(-1);
@@ -331,7 +356,6 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     // the model is given and the mismatch report, never what may be stored:
     // `EMPLOYS` and `ACQUIRED` are both no longer declared and both are kept with
     // their own predicate.
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("patch"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
@@ -340,7 +364,9 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
       .send({ ontology: { entityTypes: ["COMPANY", "PERSON"], relationshipTypes: ["REPORTS_TO"] } })
       .expect(200);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION] },
+    ]);
 
     expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
     expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
@@ -380,11 +406,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
   });
 
   it("records every catalog mismatch in the document's audit", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("mixed"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION, BAD_ENTITY] },
+    ]);
 
     // The response cannot carry this — IngestionResult is nine fixed oracle keys —
     // so the audit column is where it lands, readable via GET /documents/:id.
@@ -422,11 +449,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // The cost this replacement removes: `ACQUIRED` is not declared, and the old
     // pipeline dropped the whole triplet for it. The edge now exists under the
     // predicate the document used, and both endpoints keep their rows.
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("cost"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION] },
+    ]);
 
     expect(await writtenRelationTypes(stackId)).toEqual(["ACQUIRED", "EMPLOYS"]);
     expect(await writtenEntityTypes(stackId)).toEqual(["COMPANY", "PERSON"]);
@@ -451,11 +479,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
       relation: { type: "EMPLOYS" },
       object: { type: "PERSON", name: "Nobody" },
     }));
-    setToolResponse([{ triplets: many }]);
     const stackId = await createStackWith(app, domain("cap"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: many }]);
 
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
     const open = audit["open"] as {
@@ -475,11 +502,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // than false. The pair distinguishes "oriented by a default the caller never
     // chose" from "oriented by a declaration they wrote", which is the difference
     // between our policy being wrong and their config being wrong.
-    setToolResponse([{ triplets: [IN_ONTOLOGY, BAD_RELATION] }]);
     const stackId = await createStackWith(app, domain("plain"), undefined);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [
+      { triplets: [IN_ONTOLOGY, BAD_RELATION] },
+    ]);
 
     expect(await documentAudit(stackId, documentId)).toEqual({
       ontology: {
@@ -506,11 +534,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
   });
 
   it("records a clean run as zero rejections rather than omitting the report", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
     const stackId = await createStackWith(app, domain("clean"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [IN_ONTOLOGY] }]);
 
     const audit = await documentAudit(stackId, documentId);
     // Byte-identical to the payload written before the degradation section
@@ -540,11 +567,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // A response with neither a `triplets` nor an `entities` array is a degraded
     // answer, not a document with nothing in it. Before this section existed the
     // ingest answered 200 with an empty graph and the reason was nowhere.
-    setToolResponse([MANGLED]);
     const stackId = await createStackWith(app, domain("mangled"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [MANGLED]);
 
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
     // Only `mangledChunks`: a chunk with no envelope produced no triplet, so it
@@ -558,11 +584,10 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
     // was never told `ALIEN_CONSTRUCT` was illegal, so a proposal outside the
     // catalog is orientation feedback, not non-compliance — and the entity is
     // stored under the proposal.
-    setToolResponse([{ triplets: [BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("advisory"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [BAD_ENTITY] }]);
 
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
     expect(audit).not.toHaveProperty("extraction");
@@ -577,30 +602,34 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
   });
 
   it("counts every mangled chunk, not only the first", async () => {
-    setToolResponse(Array.from({ length: 40 }, () => MANGLED));
     const stackId = await createStackWith(app, domain("mangled-all"), DECLARATION);
     const documentId = await createDocument(stackId, LONG_BODY);
 
-    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    // `chunks_created` is phase one's own count, and the compile reads exactly those
+    // stored chunks — which is why the mangled count below has to match it.
+    const stored = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(Array.from({ length: 40 }, () => MANGLED));
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     // An all-mangled run is degraded, not an outage: it answers 200 with an empty
     // graph, and this counter is the only place the loss is recorded.
-    expect(response.body.chunks_created).toBeGreaterThan(1);
+    expect(stored.body.chunks_created).toBeGreaterThan(1);
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
-    expect(audit["extraction"]).toEqual({ mangledChunks: response.body.chunks_created });
+    expect(audit["extraction"]).toEqual({ mangledChunks: stored.body.chunks_created });
   });
 
   it("keeps the two counters apart when both fire in one document", async () => {
     // One mangled chunk, then one chunk whose two out-of-catalog triplets carry
     // two mismatched positions between them. Chunks and proposals share no
     // denominator, so one coalesced number would be wrong for both.
-    setToolResponse([MANGLED, { triplets: [BAD_RELATION, BAD_ENTITY] }]);
     const stackId = await createStackWith(app, domain("both"), DECLARATION);
     const documentId = await createDocument(stackId, LONG_BODY);
 
-    const response = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    const stored = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([MANGLED, { triplets: [BAD_RELATION, BAD_ENTITY] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
-    expect(response.body.chunks_created).toBeGreaterThan(1);
+    expect(stored.body.chunks_created).toBeGreaterThan(1);
     const audit = (await documentAudit(stackId, documentId)) as Record<string, unknown>;
     expect(audit["extraction"]).toEqual({ mangledChunks: 1 });
     expect(audit["open"]).toMatchObject({
@@ -612,14 +641,12 @@ describe.skipIf(skipReason !== false)("ingest records what the ontology rejected
   it("clears a previous run's counters when a re-ingest answers cleanly", async () => {
     // The section describes the run that produced the current graph. A leftover
     // one would report degradation against an ingest that no longer has any.
-    setToolResponse([MANGLED]);
     const stackId = await createStackWith(app, domain("stale"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [MANGLED]);
     expect(await documentAudit(stackId, documentId)).toHaveProperty("extraction");
 
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
-    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    await ingestThenCompile(app, stackId, documentId, [{ triplets: [IN_ONTOLOGY] }]);
 
     expect(await documentAudit(stackId, documentId)).not.toHaveProperty("extraction");
   });

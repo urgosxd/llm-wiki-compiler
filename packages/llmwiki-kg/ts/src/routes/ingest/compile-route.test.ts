@@ -54,6 +54,7 @@ import { parseConfig } from "../../config.js";
 import { createRequestTransactionWrapper, createTransactionRunner } from "../../db.js";
 import { createIngestRouter } from "../ingest.js";
 import type { IngestRouterDependencies } from "../ingest.js";
+import { COMPILE_MISSING_RUNNER_MESSAGE, noStoredChunksDetail } from "./compile.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
@@ -103,17 +104,12 @@ function compileUrl(stackId: string, documentId: string): string {
 /**
  * The refusal a document with no stored chunks earns.
  *
- * Spelled out in the test on purpose: the message is the contract a caller reads, and
- * it has to say BOTH things — that the document was never ingested, and that the
- * compile reads stored chunks — because either one alone leaves the caller guessing
- * what to do next.
+ * Imported from the route that raises it rather than spelled out here: the sentence is
+ * the contract a caller reads, and a copy in the test would let the route's wording
+ * change without this file noticing. It has to say BOTH things — what is missing and why
+ * the route cannot proceed — because either half alone leaves the caller guessing.
  */
-function notIngestedDetail(stackId: string, documentId: string): string {
-  return (
-    `Document ${documentId} has not been ingested: it has no stored chunks in Stack ` +
-    `${stackId}. Compile reads the chunks the ingest route persists and cannot invent them.`
-  );
-}
+const NOT_INGESTED_FACTS = ["has not been ingested", "stored chunks"] as const;
 
 /** What one Stack holds, so a refusal can be proved to have written nothing. */
 interface StackSnapshot {
@@ -167,15 +163,50 @@ async function stackSnapshot(stackId: string): Promise<StackSnapshot> {
 /** The counters `stackSnapshot` reads, so the fallback below stays exhaustive. */
 type Counted = "chunks" | "entities" | "relationships" | "evidence" | "log";
 
-/** Reads the counters defensively: a missing row is a failed read, not a zero. */
+/**
+ * Reads the counters defensively: a missing row is a failed read, not a zero.
+ *
+ * The read above always returns exactly one row — every field is a scalar subquery — so
+ * an absent row means the read itself failed. Throwing keeps that a loud failure instead
+ * of a snapshot of `-1`s that would compare equal to another failed read.
+ */
 function counted(row: Record<Counted, number> | undefined): Record<Counted, number> {
+  if (row === undefined) throw new Error("the stack snapshot read returned no row");
   return {
-    chunks: row?.chunks ?? -1,
-    entities: row?.entities ?? -1,
-    relationships: row?.relationships ?? -1,
-    evidence: row?.evidence ?? -1,
-    log: row?.log ?? -1,
+    chunks: row.chunks,
+    entities: row.entities,
+    relationships: row.relationships,
+    evidence: row.evidence,
+    log: row.log,
   };
+}
+
+/**
+ * Builds an app whose wiring injects only `wrap` — no bounded runner.
+ *
+ * The compile route has no fallback for that shape: it always calls a provider, so the
+ * request transaction would be open across the extraction and classification calls
+ * (S44). It must say so rather than run.
+ *
+ * @returns The app, with errors rendered as the route's JSON detail.
+ */
+function buildRunnerlessApp(): Express {
+  const wrap = createRequestTransactionWrapper(database());
+  const apiKey = createRequireApiKey(parseConfig({ AKS_API_KEY: "" }));
+
+  const app = express();
+  app.use(express.json({ strict: false }));
+  app.use(createIngestRouter({ wrap, apiKey }));
+  app.use((_req, res) => {
+    res.status(404).json({ detail: "Not Found" });
+  });
+  app.use(
+    (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ detail: message });
+    },
+  );
+  return app;
 }
 
 /** How many `document_chunks` rows one document holds. */
@@ -275,11 +306,10 @@ describe.skipIf(skipReason !== false)("compile refuses a document with no stored
       .expect(409);
 
     expect(response.body).toEqual({
-      detail: notIngestedDetail(world.stackId, stored),
+      detail: noStoredChunksDetail(world.stackId, stored),
     });
     // The sentence has to name both facts, so a caller learns what is missing and why.
-    expect(response.body.detail).toContain("has not been ingested");
-    expect(response.body.detail).toContain("stored chunks");
+    for (const fact of NOT_INGESTED_FACTS) expect(response.body.detail).toContain(fact);
     // No extraction call was made either: the refusal happens before the provider stage,
     // so a document that cannot be compiled costs nothing.
     expect(await stackSnapshot(world.stackId)).toEqual(before);
@@ -322,5 +352,54 @@ describe.skipIf(skipReason !== false)("compile extracts the stored chunks (S2)",
     // And it read the stored chunks without rewriting them: faking an embedding to
     // satisfy the write would have churned these rows.
     expect(await chunkCount(stackId, documentId)).toBe(storedChunks);
+  });
+});
+
+describe.skipIf(skipReason !== false)("compile refuses a wiring with no bounded runner (S44)", () => {
+  it("answers its own wiring sentence and writes nothing", async () => {
+    const stackId = await createStack();
+    const documentId = await createDocument(stackId, BODY);
+    const before = await stackSnapshot(stackId);
+
+    const response = await request(buildRunnerlessApp())
+      .post(compileUrl(stackId, documentId))
+      .expect(500);
+
+    // Its OWN sentence, not the shared ingest one: a compile always calls a provider, so
+    // there is no single-transaction shape for it to fall back to and the message names
+    // the route rather than a classifier.
+    expect(response.body).toEqual({ detail: COMPILE_MISSING_RUNNER_MESSAGE });
+    expect(COMPILE_MISSING_RUNNER_MESSAGE).toContain(
+      "compile requires a bounded transaction runner",
+    );
+    expect(await stackSnapshot(stackId)).toEqual(before);
+  });
+});
+
+describe.skipIf(skipReason !== false)("compile names the cause it cannot separate (S5, S10)", () => {
+  it("does not claim an ingested zero-chunk document was never ingested", async () => {
+    const stackId = await createStack();
+    // A whitespace-only document: it ingests successfully and persists NO chunk row, so
+    // its stored state is byte-identical to a document nobody ever ingested.
+    const documentId = await createDocument(stackId, "   \n\t\n  ");
+    const ingested = await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    expect(ingested.body).toMatchObject({ chunks_created: 0, entities_extracted: 0 });
+    const before = await stackSnapshot(stackId);
+
+    const response = await request(app)
+      .post(compileUrl(stackId, documentId))
+      .expect(409);
+
+    // This document WAS ingested, so the refusal must not assert otherwise. It names the
+    // real precondition — no stored chunks — and both causes it cannot tell apart.
+    expect(response.body).toEqual({
+      detail: noStoredChunksDetail(stackId, documentId),
+    });
+    expect(response.body.detail).toContain("has no stored chunks");
+    expect(response.body.detail).toContain("has not been ingested yet");
+    expect(response.body.detail).toContain("produced no chunks");
+    expect(response.body.detail).not.toContain("has not been ingested:");
+    // And the refusal wrote nothing: the chunk-less document is exactly as it was.
+    expect(await stackSnapshot(stackId)).toEqual(before);
   });
 });

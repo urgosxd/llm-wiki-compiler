@@ -56,6 +56,7 @@ import { createStacksRouter } from "../stacks.js";
 import { withFixtureTenant } from "../fixture-tenant.js";
 import { installFetchStub, setToolResponse, uninstallFetchStub } from "../../core/extraction-harness.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -188,11 +189,12 @@ async function createStack(app: Express, label: string): Promise<string> {
   return String(created.body.id);
 }
 
-/** Ingests {@link ANSWER} into a fresh document. */
+/** Ingests {@link ANSWER} into a fresh document, then compiles it. */
 async function ingestAnswer(app: Express, stackId: string): Promise<void> {
   const documentId = await createDocument(stackId, BODY);
-  setToolResponse([ANSWER]);
   await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+  setToolResponse([ANSWER]);
+  await request(app).post(compileUrl(stackId, documentId)).expect(200);
 }
 
 /** Moves the Stack's catalog to {@link SECOND_CATALOG}, so every stored decision is stale. */

@@ -63,7 +63,7 @@ import { withFixtureTenant } from "./fixture-tenant.js";
 
 import { createRequireApiKey } from "../auth.js";
 import { parseConfig } from "../config.js";
-import { createRequestTransactionWrapper } from "../db.js";
+import { createRequestTransactionWrapper, createTransactionRunner } from "../db.js";
 import { createStacksRouter } from "./stacks.js";
 import { createIngestRouter } from "./ingest.js";
 import {
@@ -72,6 +72,7 @@ import {
   unclassifiedWarningMessage,
 } from "./ingest/audit.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -146,7 +147,7 @@ function buildApp(): Express {
   const app = express();
   app.use(express.json({ strict: false }));
   app.use("/stacks", createStacksRouter({ wrap, apiKey }));
-  app.use(createIngestRouter({ wrap, apiKey }));
+  app.use(createIngestRouter({ wrap, apiKey, run: createTransactionRunner(database()) }));
   app.use((_req, res) => {
     res.status(404).json({ detail: "Not Found" });
   });
@@ -241,7 +242,7 @@ describe.skipIf(skipReason !== false)("ingest merges into the audit blob", () =>
   });
 
   it("deletes only the extraction section when a re-ingest answers cleanly", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    const answer = [{ triplets: [IN_ONTOLOGY] }];
     const stackId = await createStackWith(app, domain("clean"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
     await seedAudit(stackId, documentId, {
@@ -250,7 +251,11 @@ describe.skipIf(skipReason !== false)("ingest merges into the audit blob", () =>
       extraction: STALE_EXTRACTION,
     });
 
+    // Ingest stores, compile extracts: the stale sections are overwritten by the
+    // phase that actually ran the model, and the sibling's key survives both.
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     // The whole blob, not a per-key look: `toEqual` fails on an extra key, which
     // is the only way to observe that `extraction` really went, and on a missing
@@ -268,13 +273,43 @@ describe.skipIf(skipReason !== false)("ingest merges into the audit blob", () =>
     expect(audit).not.toHaveProperty("extraction");
   });
 
+  it("writes no audit of its own and never erases the one a compile wrote", async () => {
+    const answer = [{ triplets: [IN_ONTOLOGY] }];
+    const stackId = await createStackWith(app, domain("phase-one"), DECLARATION);
+    const documentId = await createDocument(stackId, BODY);
+
+    // PHASE ONE writes no audit at all. `writeIngestAudit` deletes the `extraction`,
+    // `open` and `classification` keys whenever the report it is handed omits them, so
+    // an ingest that wrote its own `ontology`-only section would ERASE the record a
+    // previous compile left behind. Not writing is what makes that impossible.
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    expect(await documentAudit(stackId, documentId)).toBeNull();
+
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
+    const afterCompile = await documentAudit(stackId, documentId);
+    // A real compile's blob, so the hazard below is measured against what the second
+    // phase actually stores rather than against a hand-written stand-in.
+    expect(afterCompile).toEqual({
+      ontology: FRESH_ONTOLOGY,
+      classification: unconfiguredClassification(3),
+    });
+
+    // The B0 hazard, pinned: a LATER ingest must leave that blob alone. Deleting its
+    // sections would destroy the only record of a run whose decisions are still stored,
+    // and nothing else in the codebase reads those keys to notice they went missing.
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    expect(await documentAudit(stackId, documentId)).toEqual(afterCompile);
+  });
+
   it("keeps a sibling section when it also writes the degradation one", async () => {
-    setToolResponse([MANGLED]);
     const stackId = await createStackWith(app, domain("degraded"), DECLARATION);
     const documentId = await createDocument(stackId, BODY);
     await seedAudit(stackId, documentId, { quality: QUALITY });
 
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([MANGLED]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     // The degraded branch is two nested `jsonb_set` calls. Written the other way
     // -- each applied to `coalesce(audit, '{}')` -- the second would overwrite

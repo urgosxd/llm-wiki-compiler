@@ -43,6 +43,7 @@ import { createRequestTransactionWrapper, createTransactionRunner } from "../db.
 import { createIngestRouter } from "./ingest.js";
 import { createStacksRouter } from "./stacks.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -173,13 +174,16 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     return `w2ex-ingest-formation-${label}-${Date.now().toString(36)}-${String(sequence)}`;
   }
 
-  /** Creates a Stack, a document, and ingests the shared triplet. */
+  /** Creates a Stack, a document, and ingests and compiles the shared triplet. */
   async function ingestOnce(label: string, triplets: readonly unknown[] = [TRIPLET]) {
     const stackId = await createStack(app, domain(label));
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([{ triplets }]);
-    const response = await request(app).post(ingestUrl(stackId, documentId));
-    expect(response.status).toBe(200);
+    const answer = [{ triplets }];
+    // Phase one stores the chunks and forms nothing; phase two is what turns them into
+    // rows, so every graph assertion below reads what the compile wrote.
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
     return { stackId, documentId };
   }
 
@@ -284,8 +288,9 @@ describe.skipIf(skipReason !== false)("entities and relationships are formed", (
     // same entity must contribute to it, not create a twin.
     const { stackId } = await ingestOnce("reuse");
     const secondDoc = await createDocument(stackId, BODY);
-    setToolResponse([{ triplets: [TRIPLET] }]);
     await request(app).post(ingestUrl(stackId, secondDoc)).expect(200);
+    setToolResponse([{ triplets: [TRIPLET] }]);
+    await request(app).post(compileUrl(stackId, secondDoc)).expect(200);
 
     const rows = await entityRows(stackId);
 
@@ -341,7 +346,7 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
     // isolated nodes.
     const stackId = await createStack(app, domain("relation"));
     const documentId = await createDocument(stackId, "Globex partners with Initech.");
-    setToolResponse([
+    const answer = [
       {
         triplets: [
           {
@@ -351,8 +356,10 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
           },
         ],
       },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const rows = await entityRows(stackId);
 
@@ -365,7 +372,7 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
     // verb — never a generic stand-in — for a later classification or review.
     const stackId = await createStack(app, domain("no-edge"));
     const documentId = await createDocument(stackId, "Globex partners with Initech.");
-    setToolResponse([
+    const answer = [
       {
         triplets: [
           {
@@ -375,8 +382,10 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
           },
         ],
       },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const edges = await database().execute<{ n: number; type: string }>(sql`
       select count(*)::int as n, min(type) as type
@@ -393,7 +402,7 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
     // used to be dropped here, which made the ontology a filter.
     const stackId = await createStack(app, domain("alien"));
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([
+    const answer = [
       {
         triplets: [
           {
@@ -403,8 +412,10 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
           },
         ],
       },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     expect((await entityRows(stackId)).map((row) => ({ name: row.name, type: row.type }))).toEqual([
       { name: "Nobody", type: "PERSON" },
@@ -417,7 +428,7 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
     // declaration does not name keeps its edge too, with its own predicate.
     const stackId = await createStack(app, domain("mixed"));
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([
+    const answer = [
       {
         triplets: [
           TRIPLET,
@@ -428,8 +439,10 @@ describe("endpoints of a triplet with an out-of-catalog verb", () => {
           },
         ],
       },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const names = (await entityRows(stackId)).map((row) => row.name).sort();
     const edges = await database().execute<{ n: number }>(sql`
@@ -451,12 +464,14 @@ describe("standalone entities", () => {
     return `w2ex-ingest-standalone-${label}-${Date.now().toString(36)}-${String(sequence)}`;
   }
 
-  /** Ingests a payload carrying `entities` and no triplets at all. */
+  /** Ingests a payload carrying `entities` and no triplets at all, then compiles it. */
   async function ingestEntities(label: string, entities: readonly unknown[]) {
     const stackId = await createStack(app, domain(label));
     const documentId = await createDocument(stackId, "We decided to use Postgres.");
-    setToolResponse([{ triplets: [], entities }]);
-    const response = await request(app).post(ingestUrl(stackId, documentId));
+    const answer = [{ triplets: [], entities }];
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    const response = await request(app).post(compileUrl(stackId, documentId));
     expect(response.status).toBe(200);
     return { stackId, documentId, response };
   }
@@ -491,8 +506,10 @@ describe("standalone entities", () => {
     // node could live was inside a triplet.
     const stackId = await createWideStack("one");
     const documentId = await createDocument(stackId, "We decided to use Postgres.");
-    setToolResponse([{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }]);
+    const answer = [{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const rows = await entityRows(stackId);
 
@@ -504,8 +521,10 @@ describe("standalone entities", () => {
   it("forms no relationship row for a standalone entity", async () => {
     const stackId = await createWideStack("no-edge");
     const documentId = await createDocument(stackId, "We decided to use Postgres.");
-    setToolResponse([{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }]);
+    const answer = [{ triplets: [], entities: [{ type: "DECISION", name: "Use Postgres" }] }];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const edges = await database().execute<{ n: number }>(sql`
       select count(*)::int as n from ontology_relationships where stack_id = ${stackId}
@@ -533,13 +552,15 @@ describe("standalone entities", () => {
     // decision from `entities`; all three must be rows.
     const stackId = await createWideStack("mixed");
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([
+    const answer = [
       {
         triplets: [TRIPLET],
         entities: [{ type: "DECISION", name: "Use Postgres" }],
       },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const names = (await entityRows(stackId)).map((row) => row.name).sort();
 
@@ -553,10 +574,12 @@ describe("standalone entities", () => {
       { type: "COMPANY", name: "Acme" },
     ]);
     const documentId = await createDocument(stackId, BODY);
-    setToolResponse([
+    const answer = [
       { triplets: [TRIPLET], entities: [{ type: "COMPANY", name: "Acme" }] },
-    ]);
+    ];
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse(answer);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const rows = await entityRows(stackId);
     const acme = rows.filter((row) => row.name === "Acme");

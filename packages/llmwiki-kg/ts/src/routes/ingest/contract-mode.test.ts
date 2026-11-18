@@ -43,6 +43,7 @@ import { createRequestTransactionWrapper, createTransactionRunner } from "../../
 import { createStacksRouter } from "../stacks.js";
 import { createIngestRouter } from "../ingest.js";
 import {
+  compileUrl,
   createDocument,
   database,
   deleteFixtureRows,
@@ -160,11 +161,14 @@ describe.skipIf(skipReason !== false)("the ingest endpoint offers both contracts
   });
 
   it("keeps out-of-catalog candidates by default, with no query parameter at all (S2, S7)", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
     const stackId = await createStack("default");
     const documentId = await createDocument(stackId, BODY);
 
+    // Ingest stores the chunks and forms nothing; the compile is the phase whose
+    // contract decides what enters the graph.
     await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
+    await request(app).post(compileUrl(stackId, documentId)).expect(200);
 
     const graph = await writtenGraph(stackId);
     expect(graph.entityTypes).toEqual(["COMPANY", "PERSON"]);
@@ -174,11 +178,12 @@ describe.skipIf(skipReason !== false)("the ingest endpoint offers both contracts
   });
 
   it("keeps exactly the same graph when the open contract is named explicitly", async () => {
-    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
     const stackId = await createStack("explicit");
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId, OPEN)).expect(200);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
+    await request(app).post(compileUrl(stackId, documentId, OPEN)).expect(200);
 
     const graph = await writtenGraph(stackId);
     expect(graph.relationTypes).toEqual(["ACQUIRED", "EMPLOYS"]);
@@ -189,11 +194,12 @@ describe.skipIf(skipReason !== false)("the ingest endpoint offers both contracts
     // Exactly the old pipeline: the declaration is an admission filter, the loss is
     // counted with its reason codes, and no open section is written because an
     // enforcing run keeps nothing outside the vocabulary.
-    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
     const stackId = await createStack("strict");
     const documentId = await createDocument(stackId, BODY);
 
-    await request(app).post(ingestUrl(stackId, documentId, STRICT)).expect(200);
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_ONTOLOGY, OUT_OF_ONTOLOGY] }]);
+    await request(app).post(compileUrl(stackId, documentId, STRICT)).expect(200);
 
     const graph = await writtenGraph(stackId);
     expect(graph.entityTypes).toEqual(["COMPANY", "PERSON"]);
@@ -224,13 +230,15 @@ describe.skipIf(skipReason !== false)("the ingest endpoint offers both contracts
 
   it("still honours the description flag it shares the query with", async () => {
     // PRESERVE: the DTO gained a key, so the option it already had has to keep its
-    // measured behaviour — including next to the new one.
-    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
+    // measured behaviour — including next to the new one. It travels on the COMPILE
+    // request, which is the phase that decides whether to synthesize at all.
     const stackId = await createStack("synthesize");
     const documentId = await createDocument(stackId, BODY);
 
+    await request(app).post(ingestUrl(stackId, documentId)).expect(200);
+    setToolResponse([{ triplets: [IN_ONTOLOGY] }]);
     const response = await request(app)
-      .post(ingestUrl(stackId, documentId, `${OPEN}&synthesize_descriptions=false`))
+      .post(compileUrl(stackId, documentId, `${OPEN}&synthesize_descriptions=false`))
       .expect(200);
 
     expect(response.body.descriptions_synthesized).toBe(false);
