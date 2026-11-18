@@ -37,7 +37,7 @@
 # and a blank pair stays empty rather than inventing a connection string — the DSN
 # arrives from the caller and is never baked into the image. It has to precede the
 # explicit-command branch because that branch is how the image runs its own schema
-# runner (`docker run <image> sh -c 'scripts/apply-schemas.sh'`), which is one of the
+# runner (`docker run <image> sh -c '/app/scripts/apply-schemas.sh'`), which is one of the
 # two commands the missing bridge broke.
 set -eu
 

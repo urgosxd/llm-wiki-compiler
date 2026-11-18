@@ -42,6 +42,20 @@ inventing a DSN, so no connection string is baked into the image. It stands abov
 command branch (`:94`) and above the mode dispatch (`:98`) because the image runs its own schema
 runner through that branch.
 
+**A blank `DATABASE_URL` is not the same as an unset one, and nothing here fixes that.** The graph
+layer's schema entry is a plain `.default()` (`packages/llmwiki-kg/ts/src/config.ts:74`), which fires
+only on `undefined`, so a present-and-empty `DATABASE_URL` reaches the graph layer as the empty string:
+it attempts that DSN and answers a generic `500 Internal Server Error`, with nothing on stderr naming
+the failure, because the graph layer has no file mode to fall back to. The wiki dimensions'
+file-versus-database decision is untouched by that — it is keyed to `AKS_DATABASE_URL` alone
+(`packages/wiki/src/dimensions/activation.ts:168-170`, its one use in
+`packages/wiki/src/dimensions/stack-authority.ts:134`) and never reads `DATABASE_URL` — so a blank
+`DATABASE_URL` cannot flip a deployment to file-backed. Measured on the same `dist/api.js` and the same
+tree, `DATABASE_URL` unset versus set to `""`: identical boot, `/health` 200 with an identical body,
+`GET /stacks` 500 `Internal Server Error`, and a `serve` graph call answering
+`AKS server returned 500: Internal Server Error` either way. A running process cannot tell the two
+apart, and this page records that rather than claiming a repair that was not made.
+
 **The second Dockerfile is not a deliverable.** `packages/llmwiki-kg/Dockerfile` and
 `packages/llmwiki-kg/docker/` remain in the tree as a reference build that ships nowhere;
 `createKgApp()` at `packages/llmwiki-kg/ts/src/index.ts:41` remains as a standalone
