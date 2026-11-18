@@ -6,8 +6,10 @@
  * ## Why the executable lives in the joining package
  *
  * `host` serves the wiki dimension's viewer and the KG dimension's graph from ONE
- * listener, and `serve` exposes the wiki tools over stdio MCP. A launcher is
- * therefore the one module that has to name both dimensions at once, which is
+ * listener, and `serve` exposes the wiki AND graph tools over stdio MCP — binding a
+ * loopback, ephemeral graph listener of its own so the graph tools have an API to
+ * call. A launcher is therefore the one module that has to name both dimensions at
+ * once, which is
  * exactly what `@repo/api` exists for: the topology permits `api → wiki`,
  * `api → kg` and forbids `wiki ↔ kg` in both directions, so a launcher written
  * anywhere else either duplicates the composition or inverts an edge the split
@@ -87,7 +89,13 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createDimensionsPort } from "./dimensions/port.js";
 import { MCP_HTTP_PATH } from "./host/mcp-http.js";
-import { createUnionMcpServer, selfServedKgBaseUrl, startUnionMcpServer } from "./host/mcp-union.js";
+import {
+  configuredKgBaseUrl,
+  createUnionMcpServer,
+  selfServedKgBaseUrl,
+  startGraphListener,
+  startUnionMcpServer,
+} from "./host/mcp-union.js";
 import { startHost, type McpBoundAddress } from "./host/server.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { hasNoResolvableStack } from "@repo/wiki/dimensions-stack-authority";
@@ -378,22 +386,71 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
 }
 
 /**
+ * The graph listener `serve` bound for its own session, and the address its graph tools call.
+ *
+ * `close` is what retires it: a listener this process opened for one client must not outlive
+ * that client, and the open handle would otherwise keep the event loop alive forever.
+ */
+interface SelfServedGraph {
+  /** Base URL the graph tools call — the listener this process bound. */
+  readonly kgBaseUrl: string;
+  /** Stop the listener. */
+  readonly close: () => Promise<void>;
+}
+
+/**
+ * Bind the graph listener `serve` answers its graph tools from, or bind NOTHING.
+ *
+ * The `undefined` answer is the operator's decision, not a fallback: a configured `AKS_BASE_URL`
+ * names an external graph API, and `selfServedKgBaseUrl` already encodes "configured ⇒ no answer
+ * of our own", so this asks the SAME rule before it opens a port instead of restating it.
+ *
+ * The bound address goes to STDERR, never stdout: in this mode stdout IS the MCP protocol
+ * channel, and one banner on it would corrupt every client's stream.
+ *
+ * @returns The self-served graph API, or `undefined` when an external one is configured.
+ */
+async function selfServedGraph(): Promise<SelfServedGraph | undefined> {
+  if (configuredKgBaseUrl() !== undefined) return undefined;
+  const listener = await startGraphListener();
+  const kgBaseUrl = selfServedKgBaseUrl(listener);
+  if (kgBaseUrl === undefined) {
+    // Unreachable while the environment holds still between the two reads; a loud stop, because the
+    // alternative is starting the union with no address and three tools that dial a default port.
+    await listener.close();
+    throw new Error("a self-served graph listener produced no base URL");
+  }
+  process.stderr.write(`[kg] serving the graph tools from ${kgBaseUrl}\n`);
+  return { kgBaseUrl, close: listener.close };
+}
+
+/**
  * Start the MCP server on stdio, rooted at `--root` or the current directory.
  *
  * The union, not the wiki alone: `serve` is the container's DEFAULT surface, so a graph tool
- * an agent cannot reach over stdio would be missing from the mode most consumers start.
+ * an agent cannot reach over stdio would be missing from the mode most consumers start. Those
+ * graph tools are HTTP clients of a graph API and this mode binds none of its own, so one is
+ * bound here unless the operator named an external one — see {@link selfServedGraph}.
  *
  * @param parsed - What the caller supplied.
  */
 async function runServe(parsed: LauncherArguments): Promise<void> {
-  await startUnionMcpServer({
-    root: parsed.values.get("--root") ?? process.cwd(),
-    version: resolveVersion(),
-    // REQUIRED by the union starter, which refuses at construction without it: the
-    // stdio surface is a container mode, so the port exists here or the process
-    // fails loudly before it advertises tools it cannot honour.
-    dimensionsPort: createDimensionsPort(),
-  });
+  const graph = await selfServedGraph();
+  try {
+    await startUnionMcpServer({
+      root: parsed.values.get("--root") ?? process.cwd(),
+      version: resolveVersion(),
+      // REQUIRED by the union starter, which refuses at construction without it: the
+      // stdio surface is a container mode, so the port exists here or the process
+      // fails loudly before it advertises tools it cannot honour.
+      dimensionsPort: createDimensionsPort(),
+      ...(graph === undefined ? {} : { kgBaseUrl: graph.kgBaseUrl, onSessionEnd: graph.close }),
+    });
+  } catch (error) {
+    // A session that never started must not leave the port it was given open.
+    await graph?.close();
+    throw error;
+  }
 }
 
 /** A subcommand: the function that runs it, and the options it honours. */
@@ -415,7 +472,8 @@ const HOST_OPTIONS: ReadonlySet<string> = new Set([
   HELP_SHORT,
 ]);
 
-/** Options `serve` accepts. Bind flags are absent, because `serve` opens no listener. */
+/** Options `serve` accepts. No BIND flag: the only listener it opens is its own loopback, ephemeral
+ * self-served graph listener, which takes no operator input and is not a published surface. */
 const SERVE_OPTIONS: ReadonlySet<string> = new Set(["--root", HELP, HELP_SHORT]);
 
 /**
