@@ -11,7 +11,7 @@ are labelled as measurements.
 ## The current shape, in one paragraph
 
 `serve` (`node /app/dist/api.js serve`, which is what `docker run <tag>` runs —
-`docker/entry.sh:84`) starts the **union** server: the wiki's 14 tools plus `query_stack`,
+`docker/entry.sh:104`) starts the **union** server: the wiki's 14 tools plus `query_stack`,
 `traverse_stack` and `get_entities`, with `list_stacks` advertised once
 (`packages/api/src/host/mcp-union.ts:93`). Because the graph tools are HTTP clients of a
 graph API rather than database clients
@@ -105,18 +105,36 @@ about the **reference recipe's** `CMD`, which was then believed to be a shipped 
    knowledge-graph tools over stdio"). The graph package's own `index.ts` still parses no
    argv (`packages/llmwiki-kg/ts/src/index.ts:9-27` reads `process.env["PORT"]` and nothing
    else), which is correct for a test composition.
-2. **The `DATABASE_URL` / `AKS_DATABASE_URL` bridge — OPEN QUESTION, not dissolved.** The
-   reference recipe's entrypoint bridges the two names:
-   `export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"`
-   (`packages/llmwiki-kg/docker/entry.sh:86`). The published image's entrypoint does no such
-   thing — `docker/entry.sh` mentions neither name. So an operator who follows the KG
-   documentation and sets `AKS_DATABASE_URL` against the **published** image gets nothing
-   from it.
+2. **The `DATABASE_URL` / `AKS_DATABASE_URL` bridge — CLOSED, and the published image now
+   bridges the two names itself.** Its entrypoint carries
+   `export DATABASE_URL="${DATABASE_URL:-${AKS_DATABASE_URL:-}}"` (`docker/entry.sh:45`) —
+   the reference recipe's own preserving bridge, at
+   `packages/llmwiki-kg/docker/entry.sh:86`, read rather than retyped. It stands after
+   `set -eu` (`docker/entry.sh:42`) and therefore above the explicit-command branch (`:94`)
+   and the `LLMWIKI_MODE` dispatch (`:98`), because the image's own schema runner is invoked
+   through that branch (`docker run <image> sh -c 'scripts/apply-schemas.sh'`) and a bridge
+   below it would be dead on the command that needs it. An operator's explicit
+   `DATABASE_URL` wins; a blank or unset one falls back to `AKS_DATABASE_URL`; a blank pair
+   stays blank rather than inventing a DSN.
 
-   Whether the one published image needs that bridge is **UNVERIFIED and owned by the
-   verification task**, recorded as an open question in
-   `odd/tasks/one-image-both-mcp-surfaces.md`, L7. Nothing in this page asserts either
-   answer.
+   Pinned, not merely documented: `test/artifact/root-entry-database-url.test.ts` asserts the
+   literal line (`:118-134`), its position above the explicit-command branch and the mode
+   dispatch (`:137-168`), that the script names `AKS_DATABASE_URL` in the bridge and nowhere
+   else and bakes no DSN, userinfo URL or token (`:170-192`), and — as PRESERVE — that a
+   caller-supplied command still runs verbatim and no arguments still mean `serve`
+   (`:194-214`). Added by commit `986200c60b89c5324e32f1eb17abf62778e1b448`.
+
+   **What was measured, and on which image.** On an image built from this branch BEFORE the
+   bridge landed, with ONLY `AKS_DATABASE_URL` set: `/health` answered 200, `GET /stacks`
+   answered 500, and `scripts/apply-schemas.sh` exited 2 with `error: no target. Pass a
+   connection string or set DATABASE_URL.` With `DATABASE_URL` also set to the same DSN:
+   `GET /stacks` answered 200 `[]` and the schema runner exited 0 with `done.` The
+   post-bridge image has **not** been rebuilt and re-measured; the proof so far is the script
+   itself, which the passthrough branch lets this host exercise —
+   `sh docker/entry.sh sh -c 'echo "$DATABASE_URL"'` answers the published name with only
+   `AKS_DATABASE_URL` set, the explicit name when both are set, and nothing when neither is.
+   The image-level re-measurement belongs to the delivery step, T6 of
+   `odd/tasks/one-image-both-mcp-surfaces.md`, where L7 raised this question and L9 closed it.
 
 ## Options considered and rejected, kept because the reasoning still holds
 

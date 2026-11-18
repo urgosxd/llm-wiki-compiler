@@ -273,6 +273,14 @@ names none is refused by name - there is no default Stack - documented once in
 | `AKS_DATABASE_URL` | The `llmwiki-kg` DSN | Connection string for the dimensions database that holds Stack-scoped rows. Setting it is how a project points at a different database, not a requirement. Absent or blank means no database is configured at all, and the run is file-backed |
 
 <Note>
+  In the published container image, `AKS_DATABASE_URL` is the only DSN name you need to set.
+  The image's entrypoint seeds `DATABASE_URL` from it when `DATABASE_URL` is unset or blank,
+  so the bundled server and `scripts/apply-schemas.sh` both reach that database. An explicit
+  `DATABASE_URL` always wins, and setting neither leaves both blank rather than pointing at
+  an implicit default.
+</Note>
+
+<Note>
   Unsetting `AKS_STACK_ID` is supported, and it does not move every backend in one
   step. The event log, the lint cache, the pending-embedding marker, the compile
   lock, the Stack-scoped project config, the review-candidate queue, the activity
