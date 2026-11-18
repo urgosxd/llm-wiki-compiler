@@ -24,7 +24,7 @@ the KG `/mcp` app.
 - **T1** (S1) — Prepare checkout and commit this document. Commit: `b11b52c05ffbb2c6f0301805c839d5a1698c618a`.
 - **T2** (S2, S3) — RED: a test against the built `dist/api.js` asserting the 17-name union set, failing because the three KG names are absent. Done: `test/mcp/one-image-both-mcp-surfaces.test.ts` shipped in T3's commit, `c753989a712f786642ab79413b349e4e3cbd204a`, so no commit of its own.
 - **T3** (S2, S3, S4, S7, S8, S10) — Compose the union in `packages/api` and make T2 green. Done. Commit: `c753989a712f786642ab79413b349e4e3cbd204a`.
-- **T4** (S5, S6, S7) — Auth slice on `/mcp`, both directions asserted. Own commit, `Risk: item 2`. Commit: pending.
+- **T4** (S5, S6, S7) — Auth slice on `/mcp`, both directions asserted. Done. Own commit, `Risk: item 2`. Commit: `f4062035fa73be200b6781d726f631e7308e9ca2`. Closed — this commit is the auth slice boundary.
 - **T5** (S11) — Retire the second image from Dockerfile, CI and docs. Commit: pending.
 - **T6** (S9, S10, S12) — Independent verification and local image build evidence. Commit: pending.
 
@@ -55,3 +55,14 @@ the KG `/mcp` app.
   - `HostOptions.mcpServerFactory` now receives the bound address (`McpBoundAddress`), because `--port 0` only becomes a number after `listen`. A zero-argument factory remains assignable, so existing callers were unaffected.
   - S10 measured BOTH ways: a real `get_entities` call over the stdio client succeeded end to end against a per-run database and a Stack created over the host's own `POST /stacks` (the answer was the graph surface's own `(No entities matched the filter)`), and the isolation case pointed the graph surface at a closed loopback port with a real database in reach and saw the graph call answer an error result while `lint_wiki` still answered JSON in the same session. `search_pages` was rejected for that case because it needs an LLM provider, which would have failed for a reason unrelated to isolation.
   - Not done here, by design: auth (T4, `Risk: item 2`), retiring the second image (T5), and the image build evidence (T6).
+- **L5** — T4 auth slice, as measured in `f4062035fa73be200b6781d726f631e7308e9ca2`. The environment variable that decides the policy is `AKS_API_KEY`; `packages/llmwiki-kg/ts/src/config.ts:316` sets `authEnabled: parsed.AKS_API_KEY !== ""`, and `auth.ts` passes every request through when that flag is false — so **the default is pass-through when no key is configured**, matching the graph image.
+  - The policy is the graph's own middleware, not a copy: `packages/api/src/host/mcp-http.ts:144` binds `createRequireApiKey(kgConfig)`, re-exported from `packages/llmwiki-kg/ts/src/core-index.ts:109`. `packages/api/package.json` declares no `express`, and the Express surface the middleware needs is a two-method facade (`status`, `json`) over the real `ServerResponse`, so the 401 body is `INVALID_API_KEY_DETAIL`'s own bytes and cannot drift from `auth.ts`.
+  - Enforcement is `handleMcpHttp`'s first statement, before body parsing and before method handling, and `handleMcpHttp` is reached only under `isMcpHttpPath(req.url)` (`packages/api/src/host/server.ts:628`), so no other route changed.
+  - Six measured request outcomes against a spawned `dist/api.js host --port 0`, `test/mcp/mcp-auth-policy.test.ts`, 6/6 passing:
+    1. key configured, no `X-API-Key` → **401**, body exactly `{"detail":"Invalid or missing API key. Provide it in the X-API-Key header."}`.
+    2. key configured, correct header → **200**, `initialize` answers and `tools/list` returns the same 17-name union.
+    3. key configured, wrong header → the **same 401 and the same bytes**, so the comparison is real rather than "a header is present".
+    4. key configured, `/health` without a header → **200** `{"status":"ok"}`, asserted in the same child as a 401 on `/mcp`, so the stricter surface is scoped to `/mcp` alone.
+    5. no key configured, no header → **200** and the whole union (pass-through default).
+    6. key configured, stdio `serve` → the whole union, unaffected, because stdio has no headers.
+  - Operator consequence, stated and not silent: setting `AKS_API_KEY` now requires the `X-API-Key` header for the streamable-HTTP wiki tools too. S5's `docs/` wording is T5's, still pending.
