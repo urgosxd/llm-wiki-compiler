@@ -93,6 +93,7 @@ import { buildIngestEnv } from "@repo/wiki/ingest-env";
 import { createDimensionsDatabase, isDatabaseConfigured } from "@repo/wiki/dimensions-activation";
 import { stackResolution } from "@repo/wiki/stack-store";
 import type { createDimensionsPort } from "../dimensions/port.js";
+import { compileReportOf } from "./compile-report.js";
 
 /**
  * The dimensions port this mount threads to the ingest service.
@@ -569,7 +570,11 @@ async function handleCompile(
       writeJsonError(res, 409, "busy", "another compile is in progress");
       return;
     }
-    writeJson(res, 200, result);
+    // ADDITIVE, on the precedent `runSyncIngest` set for `compiled`/`compileBusy`: every
+    // existing key keeps its name and its meaning, and the report is one more key a
+    // consumer may ignore. The busy path above is untouched -- a report of a run that never
+    // started would be a second answer to a question the 409 already answers.
+    writeJson(res, 200, { ...result, dimensions: compileReportOf(result) });
   } catch (error) {
     respondToThrow(res, root, error);
   }
