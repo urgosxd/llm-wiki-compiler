@@ -152,6 +152,41 @@ async function ingested(
   return { stackId, documentId };
 }
 
+/** The graph values a repeat compile must leave alone (S7). */
+interface GraphState {
+  readonly entities: readonly {
+    readonly id: string;
+    readonly confidence: number;
+    readonly last_seen_at: unknown;
+    readonly updated_at: unknown;
+  }[];
+  readonly relationships: readonly unknown[];
+}
+
+/**
+ * Reads the graph columns S7 names, one row per entity and per edge, in a stable order.
+ *
+ * `order by id` rather than by name: a re-extraction that renamed an entity must show up
+ * as a moved row, not as a reordered list that happens to compare equal.
+ */
+async function graphState(stackId: string): Promise<GraphState> {
+  return withFixtureTenant(database(), { stackId }, async (tx) => {
+    const entities = await tx.execute<{
+      id: string;
+      confidence: number;
+      last_seen_at: unknown;
+      updated_at: unknown;
+    }>(sql`
+      select id, confidence, last_seen_at, updated_at
+      from ontology_entities where stack_id = ${stackId} order by id
+    `);
+    const relationships = await tx.execute(sql`
+      select * from ontology_relationships where stack_id = ${stackId} order by id
+    `);
+    return { entities, relationships };
+  });
+}
+
 let app: Express;
 
 beforeEach(async () => {
@@ -277,6 +312,32 @@ describe.skipIf(skipReason !== false)("a dry run answers a plan and only a plan 
       .post(compileUrl(world.stackId, world.documentId, "?dry_run=0"))
       .expect(200);
     expect(zero.body).toHaveProperty("chunks_read");
+  });
+});
+
+describe.skipIf(skipReason !== false)("a repeat compile moves no graph value (S7)", () => {
+  it("leaves confidence, last_seen_at, updated_at and every edge identical", async () => {
+    const world = await ingested(app, BODY);
+    setCap("5");
+    setToolResponse([ANSWER, ANSWER]);
+    await request(app).post(compileUrl(world.stackId, world.documentId)).expect(200);
+    const first = await graphState(world.stackId);
+    // The first compile must have written something: a second run that wrote nothing at
+    // all would otherwise be indistinguishable from a guard that works.
+    expect(first.entities.length).toBeGreaterThan(0);
+    expect(first.relationships.length).toBeGreaterThan(0);
+
+    const again = await request(app)
+      .post(compileUrl(world.stackId, world.documentId))
+      .expect(200);
+    // Still a real run: it read the chunks and answered the compile shape.
+    expect(again.body).toHaveProperty("chunks_read");
+    expect(again.body).not.toHaveProperty("dry_run");
+
+    // Confidence is bumped ONLY on new corroboration and the stamps are touched only with
+    // it (`core/document-consolidation.ts`), so a repeat compile of unchanged text must
+    // leave every entity column and every edge row exactly as the first run left them.
+    expect(await graphState(world.stackId)).toEqual(first);
   });
 });
 
