@@ -99,6 +99,15 @@ export type { Database } from "./db.js";
 export { config as kgConfig, ConfigValidationError } from "./config.js";
 export type { Config as KgConfig } from "./config.js";
 
+// The graph's own API-key middleware, and the refusal detail it answers with.
+//
+// Exported through this barrel so the ONE `/mcp` endpoint can carry the graph's
+// policy instead of a second copy of it: one endpoint cannot carry two policies,
+// and the only honest way to say "the graph's" is to run the graph's middleware.
+// Pure re-export — `auth.js` reads no config, opens no pool and fetches nothing at
+// import time, so this line adds no side effect to a consumer's boot.
+export { createRequireApiKey, INVALID_API_KEY_DETAIL } from "./auth.js";
+
 // The wiki-to-KG credential bridge and its fail-closed check (shared-credential
 // feature).
 //

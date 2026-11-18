@@ -54,10 +54,39 @@
  * The SDK's Node transport takes an optional pre-parsed body. The host's dispatcher is
  * a bare `(req, res)` pair with no body middleware, so this module reads the JSON
  * itself, with a bound, and hands the result over.
+ *
+ * ## Why this endpoint carries the GRAPH's policy and not a new one
+ *
+ * Two MCP surfaces were merged into one path, so the path can carry exactly one policy: the
+ * graph's, `X-API-Key`. It is the graph package's own middleware — {@link apiKeyPolicy}, built
+ * from `createRequireApiKey` and the process config — and not a second copy of the rule, so its
+ * two existing semantics come along unchanged:
+ *
+ *   - a configured key (`AKS_API_KEY` non-blank) requires the header, and a missing or wrong one
+ *     is refused with the graph's 401 and its exact `detail` body;
+ *   - NO configured key is FAIL-OPEN, the same pass-through the graph image has today. This is
+ *     what keeps every deployment that runs without a key — including the published image's
+ *     default — reaching the wiki tools exactly as before.
+ *
+ * The consequence is a documented operator decision, not an accident: an operator who SETS a key
+ * now needs the header for the wiki tools too, because one endpoint cannot hold two policies.
+ * Nothing else changes: the viewer, `/api/**` and the graph's own routes keep their own policies,
+ * and this module claims no path but `/mcp`.
+ *
+ * ## Why the policy sees a FACADE response rather than an Express one
+ *
+ * The middleware is an Express handler, and this module deliberately owns no Express app (see
+ * the injected factory above): `packages/api` declares no `express` dependency. The middleware
+ * touches exactly three members — `req.headers`, `res.status(code)` and `res.json(body)` — so
+ * {@link policyResponse} implements those two response methods over the real `ServerResponse`
+ * and nothing else. No decision lives in the facade: the status and the body both come from
+ * `auth.ts`, and `json` writes the bytes that constant produces, which is what makes the refusal
+ * byte-for-byte the graph's.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createRequireApiKey, kgConfig } from "@repo/kg";
 
 /** Path this module claims. One constant so the mount and the check cannot drift. */
 export const MCP_HTTP_PATH = "/mcp";
@@ -98,6 +127,68 @@ export function isMcpHttpPath(url: string | undefined): boolean {
   if (url === undefined) return false;
   const pathname = url.split("?")[0] ?? "/";
   return pathname === MCP_HTTP_PATH;
+}
+
+/**
+ * The graph's API-key middleware, type-narrowed to the three members it actually uses.
+ *
+ * The parameters stay `unknown`-shaped because the middleware declares EXPRESS request and
+ * response objects and this module has none: the cast is the whole adaptation, and it is safe
+ * for exactly the reason {@link policyResponse} exists — `auth.ts` reads `req.headers` and calls
+ * `res.status`/`res.json`, and nothing else. Narrowing here rather than at each call site keeps
+ * one place answerable for that claim.
+ */
+type ApiKeyPolicy = (req: unknown, res: unknown, next: () => void) => void;
+
+/** The policy, bound to the process config: `authEnabled` decides, per request. */
+const apiKeyPolicy = createRequireApiKey(kgConfig) as unknown as ApiKeyPolicy;
+
+/** The two response methods {@link apiKeyPolicy} calls. */
+interface PolicyResponse {
+  /** Record the status the policy refused with. */
+  status(code: number): PolicyResponse;
+  /** Write the body the policy refused with, exactly as it serializes. */
+  json(body: unknown): void;
+}
+
+/**
+ * The Express-response surface the policy needs, over the real `ServerResponse`.
+ *
+ * No decision is made here: the status and the body arrive from `auth.ts`, and this only writes
+ * them. The body is `JSON.stringify`'d, which is what Express's `json` does, so the refusal keeps
+ * the graph's byte-exact shape (`{"detail":"…"}`) and every client that already parses a graph
+ * 401 keeps working.
+ *
+ * @param res - The response the request was handed with.
+ * @returns The facade to hand the policy.
+ */
+function policyResponse(res: ServerResponse): PolicyResponse {
+  const facade: PolicyResponse = {
+    status(code: number): PolicyResponse {
+      res.statusCode = code;
+      return facade;
+    },
+    json(body: unknown): void {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify(body));
+    },
+  };
+  return facade;
+}
+
+/**
+ * Run the graph's policy for this request, answering a refusal itself.
+ *
+ * @param req - Incoming request, judged on its `X-API-Key` header alone.
+ * @param res - Response to write a refusal to.
+ * @returns True when the request was admitted; false when a refusal was already written.
+ */
+function admitApiKey(req: IncomingMessage, res: ServerResponse): boolean {
+  let admitted = false;
+  apiKeyPolicy(req, policyResponse(res), () => {
+    admitted = true;
+  });
+  return admitted;
 }
 
 /**
@@ -142,6 +233,10 @@ export async function handleMcpHttp(
   res: ServerResponse,
   createServer: McpHttpServerFactory,
 ): Promise<void> {
+  // BEFORE any method handling: the endpoint is one surface with one policy, so a refused
+  // caller learns nothing about it — not even which methods it accepts.
+  if (!admitApiKey(req, res)) return;
+
   // DELETE ends a session this module does not keep, so there is nothing to do.
   // Answering 405 rather than 200 keeps a client from believing it cleaned up.
   if (req.method === "DELETE") {

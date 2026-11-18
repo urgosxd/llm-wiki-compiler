@@ -65,34 +65,12 @@ import { launch, waitForReady, type Running } from "../fixtures/launcher-harness
 import { connectMcpClient, useMcpRoot } from "../fixtures/mcp-test-env.js";
 import { createSuiteDatabase, type SuiteDatabase } from "../fixtures/per-run-database.js";
 import { testDotenvEnv } from "../fixtures/test-dotenv.js";
+// The inventory lives in one module because the auth suite asserts the SAME surface an
+// authenticated request reaches: two copies of this array would drift on the next tool.
+import { EXPECTED_UNION_TOOLS as EXPECTED_TOOLS } from "./union-inventory.js";
 
 /** The published MCP path (`MCP_HTTP_PATH`), spelled here so a source edit cannot hide a drift. */
 const MCP_PATH = "/mcp";
-
-/**
- * The union the one image must advertise, sorted: the 14 wiki tools the published artifact served
- * plus the four KG tools it did not, minus the duplicate — `list_stacks` is a name collision, and
- * the wiki implementation is the one that answers, so the union is 17 names and not 18.
- */
-const EXPECTED_TOOLS: readonly string[] = [
-  "compile_wiki",
-  "export_okf",
-  "get_context_pack",
-  "get_entities",
-  "ingest_job_delete",
-  "ingest_job_status",
-  "ingest_jobs_list",
-  "ingest_source",
-  "lint_wiki",
-  "list_stacks",
-  "query_stack",
-  "query_wiki",
-  "read_page",
-  "run_eval",
-  "search_pages",
-  "traverse_stack",
-  "wiki_status",
-];
 
 /**
  * The two variables that declare "no database configured" to a spawned child, pinned BLANK so the
