@@ -17,7 +17,8 @@
  *
  * `toolCalls()` and `embeddingCalls()` read the recording fetch double after the stub is
  * reinstalled, so the ingest phase's own embeddings cannot be mistaken for the dry run's
- * spend. A before/after `stackSnapshot` proves the same about stored rows.
+ * spend. A before/after `stackFingerprint` proves the same about stored rows — including
+ * their CONTENT, so an `UPDATE` fails it and not just an insert.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,7 +60,7 @@ import {
   deleteFixtureRows,
   ingestUrl,
   skipReason,
-  stackSnapshot,
+  stackFingerprint,
   useDomainPrefix,
 } from "../ingest-harness.js";
 
@@ -136,7 +137,7 @@ afterEach(async () => {
 describe.skipIf(skipReason !== false)("compile dry run reports the plan (S3)", () => {
   it("answers the plan for an under-cap document and spends nothing", async () => {
     const world = await ingested(app, BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
     setCap("5");
 
     const response = await request(app)
@@ -155,14 +156,14 @@ describe.skipIf(skipReason !== false)("compile dry run reports the plan (S3)", (
     expect(Object.keys(response.body)).toEqual(PLAN_KEYS);
     expect(toolCalls()).toBe(0);
     expect(embeddingCalls()).toBe(0);
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
   });
 });
 
 describe.skipIf(skipReason !== false)("compile dry run answers a refusal question (S3)", () => {
   it("plans an over-cap document as would_refuse while the real run still answers 413", async () => {
     const world = await ingested(app, LONG_BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
     expect(before.chunks).toBeGreaterThan(1);
     const cap = before.chunks - 1;
     setCap(String(cap));
@@ -180,7 +181,7 @@ describe.skipIf(skipReason !== false)("compile dry run answers a refusal questio
     });
     expect(toolCalls()).toBe(0);
     expect(embeddingCalls()).toBe(0);
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
 
     // The SAME document, the same cap, without the override: still refused, still
     // spending nothing. The pair is pinned here so neither half can drift.
@@ -188,7 +189,7 @@ describe.skipIf(skipReason !== false)("compile dry run answers a refusal questio
       .post(compileUrl(world.stackId, world.documentId))
       .expect(413);
     expect(real.body.detail).toContain(KG_EXTRACTION_REQUEST_CAP_ENV_VAR);
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
     expect(toolCalls()).toBe(0);
   });
 });
@@ -196,7 +197,7 @@ describe.skipIf(skipReason !== false)("compile dry run answers a refusal questio
 describe.skipIf(skipReason !== false)("compile dry run cannot plan a misconfiguration (S3)", () => {
   it("still answers 500 for an unusable cap value instead of a plan", async () => {
     const world = await ingested(app, BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
     setCap("0");
 
     const response = await request(app)
@@ -204,7 +205,7 @@ describe.skipIf(skipReason !== false)("compile dry run cannot plan a misconfigur
       .expect(500);
 
     expect(response.body.detail).toContain(KG_EXTRACTION_REQUEST_CAP_ENV_VAR);
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
     expect(toolCalls()).toBe(0);
   });
 });
@@ -212,7 +213,7 @@ describe.skipIf(skipReason !== false)("compile dry run cannot plan a misconfigur
 describe.skipIf(skipReason !== false)("compile dry run is validated like its siblings (S3)", () => {
   it("refuses an uninterpretable dry_run value in the query section", async () => {
     const world = await ingested(app, BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
 
     const response = await request(app)
       .post(compileUrl(world.stackId, world.documentId, "?dry_run=maybe"))
@@ -222,8 +223,49 @@ describe.skipIf(skipReason !== false)("compile dry run is validated like its sib
     expect(detail).toHaveLength(1);
     expect(detail[0]?.loc).toEqual(["query", "dry_run"]);
     expect(detail[0]?.type).toBe("bool_parsing");
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
     expect(toolCalls()).toBe(0);
+  });
+});
+
+describe.skipIf(skipReason !== false)("dry_run is a compile-only override (S3, ingest contract)", () => {
+  it("leaves ingest identical for every value while compile refuses one and plans the other", async () => {
+    setCap("5");
+    const stackId = await createStack();
+    const documentId = await createDocument(stackId, BODY);
+    // Ingest answers exactly as it did before the override existed: `dry_run` is not one of
+    // its query parameters, so an uninterpretable value is not a validation failure here.
+    const ignored = await request(app)
+      .post(ingestUrl(stackId, documentId, "?dry_run=maybe"))
+      .expect(200);
+    expect(Object.keys(ignored.body)).toEqual([...RESPONSE_KEYS]);
+
+    const flagged = await request(app)
+      .post(ingestUrl(stackId, documentId, "?dry_run=true"))
+      .expect(200);
+    expect(Object.keys(flagged.body)).toEqual([...RESPONSE_KEYS]);
+    expect(embeddingCalls()).toBeGreaterThan(0);
+    expect(toolCalls()).toBe(0);
+
+    // The compile route is where the flag means something: refused as garbage …
+    const refused = await request(app)
+      .post(compileUrl(stackId, documentId, "?dry_run=maybe"))
+      .expect(422);
+    expect(refused.body.detail).toHaveLength(1);
+    expect(refused.body.detail[0].loc).toEqual(["query", "dry_run"]);
+    expect(refused.body.detail[0].type).toBe("bool_parsing");
+
+    // … and a plan when it parses.
+    const planned = await request(app)
+      .post(compileUrl(stackId, documentId, "?dry_run=true"))
+      .expect(200);
+    expect(planned.body).toEqual({
+      dry_run: true,
+      planned_chunks: 1,
+      planned_chat_requests: 1,
+      cap: 5,
+      would_refuse: false,
+    });
   });
 });
 
@@ -244,7 +286,7 @@ describe.skipIf(skipReason !== false)("the ingest route ignores dry_run (S6)", (
     // It really ran: the chunk was embedded, and no chat request was sent.
     expect(embeddingCalls()).toBeGreaterThan(0);
     expect(toolCalls()).toBe(0);
-    const after = await stackSnapshot(stackId);
+    const after = await stackFingerprint(stackId);
     expect(after.chunks).toBe(1);
     expect(after.entities).toBe(0);
   });

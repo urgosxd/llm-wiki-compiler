@@ -83,7 +83,10 @@
  *
  * `?dry_run=true` answers `200` with a {@link CompilePlan} and stops: no chat request, no
  * embedding request, no stored row. It is the same per-request override family as
- * `synthesize_descriptions` and `ontology_contract`, read by the same parser.
+ * `synthesize_descriptions` and `ontology_contract`, but it is read by this route's OWN
+ * reader ({@link parseDryRun}) rather than by the shared query schema, because declaring
+ * it there made the ingest route answer `422` to `?dry_run=maybe` where it had always
+ * answered `200`.
  *
  * Two things about it are deliberate and would be wrong the other way round:
  *
@@ -111,11 +114,13 @@ import {
   assertWithinExtractionRequestCap,
   resolveExtractionRequestCap,
 } from "@repo/foundation/extraction-request-cap";
+import type { ExtractionRequestCapResolution } from "@repo/foundation/extraction-request-cap";
 
 import { loadStackCatalog } from "../../core/catalog/stack-catalog.js";
 import { bindCallerStack } from "../../core/stack_resolver.js";
 import type { Database } from "../../db.js";
-import { apiError } from "../../errors.js";
+import { apiError, toFastApiValidationError } from "../../errors.js";
+import type { ValidationFailure } from "../../errors.js";
 import { writeIngestAudit } from "./audit.js";
 import type { ClassificationAudit } from "./audit.js";
 import { classificationRuntime } from "./classify-stage.js";
@@ -127,11 +132,12 @@ import type {
   PreparedIngest,
   TransactionRunner,
 } from "./compile-chunks.js";
-import { CompilePlan, CompileResult } from "./models.js";
+import { CompilePlan, CompileQuery, CompileResult } from "./models.js";
 import type { CompileResultDto } from "./models.js";
 import {
   findDocument,
   parseIngestRequest,
+  queryValue,
   sendApiError,
   sendDocumentNotFound,
 } from "./request.js";
@@ -328,6 +334,148 @@ async function finishCompile(
   });
 }
 
+/** The compile route's own query override, or the FastAPI query entry refusing it. */
+type DryRunParse =
+  | { readonly ok: true; readonly value: boolean | undefined }
+  | { readonly ok: false; readonly detail: ValidationFailure["body"]["detail"] };
+
+/**
+ * Reads `?dry_run=` for THIS route only, after the shared validation has passed.
+ *
+ * ## Why the compile route reads its own flag
+ *
+ * `dry_run` used to be declared in the shared `IngestQuery`, which meant the ingest route
+ * answered `422` to `?dry_run=maybe` where it had always answered `200` — an unrequested
+ * change to an existing public contract, on a route this feature is not supposed to touch.
+ * Reading it here keeps ingest byte-identical to its baseline for EVERY value of the flag,
+ * garbage included, while the compile route refuses a value it cannot interpret (new
+ * surface on a new override, which is allowed) and treats an absent one as a real run.
+ *
+ * `undefined` rather than `false` for "absent", so "did not ask" stays distinct from
+ * "asked not to plan"; a boolean default would erase a distinction for free.
+ *
+ * @param req - The request.
+ * @returns The flag, or the query entry that refuses it, in the shape the 422 reports.
+ */
+function parseDryRun(req: Request): DryRunParse {
+  const raw = { dry_run: queryValue(req, "dry_run") };
+  const parsed = CompileQuery.safeParse(raw);
+  if (parsed.success) return { ok: true, value: parsed.data.dry_run };
+  return {
+    ok: false,
+    detail: toFastApiValidationError(parsed.error, "query", raw).body.detail,
+  };
+}
+
+/**
+ * Whether the cap module would refuse this run — asked, never recomputed.
+ *
+ * The plan used to restate the boundary as `planned > cap`, which is a SECOND copy of a
+ * comparison that lives in `@repo/foundation/extraction-request-cap`. Two copies drift,
+ * and the drift is invisible: the plan would answer `would_refuse: false` while the real
+ * run answered `413` on the same numbers. So the module is asked by attempting its own
+ * assertion and catching its own refusal, which makes disagreement impossible.
+ *
+ * @param plannedChunks - The chat requests this run would plan.
+ * @param cap - The resolved cap in force.
+ * @returns True when the real run would be refused for cost.
+ */
+function wouldRefuse(plannedChunks: number, cap: number): boolean {
+  try {
+    assertWithinExtractionRequestCap(plannedChunks, cap);
+    return false;
+  } catch (error) {
+    // Only the cap's own refusal answers "yes"; anything else is a real failure.
+    if (error instanceof ExtractionRequestCapError) return true;
+    throw error;
+  }
+}
+
+/**
+ * The validated request: the shared parameters, plus this route's own flag.
+ *
+ * `dryRun` is `undefined` when the request did not mention it, which keeps "did not ask"
+ * distinct from "asked not to plan".
+ */
+interface CompileRequest {
+  readonly params: IngestParams;
+  readonly dryRun: boolean | undefined;
+}
+
+/**
+ * Validates the compile request and sends the ONE `422` it may earn.
+ *
+ * The shared entries come first and `dry_run` last, which is the order the endpoint has
+ * reported since the flag existed, so a request that fails several entries still receives
+ * a single response carrying all of them.
+ *
+ * @param req - The request.
+ * @param res - The response, used when validation fails.
+ * @returns What the stages below need, or `undefined` when the `422` was already sent.
+ */
+function readCompileRequest(req: Request, res: Response): CompileRequest | undefined {
+  const params = parseIngestRequest(req);
+  const dryRun = parseDryRun(req);
+  if (params.ok && dryRun.ok) return { params, dryRun: dryRun.value };
+  sendValidationFailure(res, [
+    ...(params.ok ? [] : params.detail),
+    ...(dryRun.ok ? [] : dryRun.detail),
+  ]);
+  return undefined;
+}
+
+/**
+ * The answers that stop before the provider stage: `500` for an unusable cap, the plan a
+ * dry run reports, and the `413` an over-cap run earns.
+ *
+ * ## Why the order is resolve, plan, refuse
+ *
+ * An unusable cap is answered first, because there is no cap to report and a plan around
+ * a broken variable would be a guess dressed as a measurement. A dry run is then answered
+ * `200` EVEN OVER THE CAP on purpose: the flag exists to answer "would this be refused",
+ * and refusing the question is the one answer that carries no information. So a dry run is
+ * never refused for cost, and the real run on the same document still is.
+ *
+ * @param res - The response, written when this returns `true`.
+ * @param chunks - The stored chunks, which IS the planned extraction request count.
+ * @param dryRun - The request's flag, `undefined` when it did not say.
+ * @param capRun - The resolved cap, or the reason none can be.
+ * @returns True when a response was already sent and the caller must stop.
+ */
+function sendPlanOrRefusal(
+  res: Response,
+  chunks: number,
+  dryRun: boolean | undefined,
+  capRun: ExtractionRequestCapResolution,
+): boolean {
+  if (capRun.kind === "invalid") {
+    sendApiError(res, apiError(INVALID_CAP_STATUS, capRun.problem));
+    return true;
+  }
+  if (dryRun === true) {
+    res.status(200).json(
+      CompilePlan.parse({
+        dry_run: true,
+        planned_chunks: chunks,
+        planned_chat_requests: chunks,
+        cap: capRun.cap,
+        would_refuse: wouldRefuse(chunks, capRun.cap),
+      }),
+    );
+    return true;
+  }
+  try {
+    assertWithinExtractionRequestCap(chunks, capRun.cap);
+    return false;
+  } catch (error) {
+    // Only the cap's own refusal is answered here; anything else is a real failure and
+    // still reaches the harness's 500 handler.
+    if (!(error instanceof ExtractionRequestCapError)) throw error;
+    sendApiError(res, apiError(OVER_CAP_STATUS, error.message));
+    return true;
+  }
+}
+
 /**
  * `POST /stacks/:stackId/documents/:doc_id/compile`.
  *
@@ -346,54 +494,21 @@ async function compileDocument(
   run: TransactionRunner,
   classification?: ClassificationRuntime,
 ): Promise<void> {
-  // The same validator as ingest: the same two path parameters, and the same per-request
-  // `synthesize_descriptions` / `ontology_contract` overrides plus this route's own
-  // `dry_run`, reported in the same 422.
-  const params = parseIngestRequest(req);
-  if (!params.ok) {
-    sendValidationFailure(res, params.detail);
-    return;
-  }
-  const read = await run((tx) => loadCompileRead(tx, params, res));
+  const request = readCompileRequest(req, res);
+  if (request === undefined) return;
+  const read = await run((tx) => loadCompileRead(tx, request.params, res));
   if (read === undefined) return;
   // The brake (S1, S2): `read.chunks.length` IS the planned extraction request count,
   // because extraction sends one chat request per chunk and these chunks are already in
-  // hand. Both refusals below answer before any provider is called and write nothing.
-  const capRun = resolveExtractionRequestCap();
-  if (capRun.kind === "invalid") {
-    sendApiError(res, apiError(INVALID_CAP_STATUS, capRun.problem));
-    return;
-  }
-  // A dry run reports the plan and stops. It answers 200 even over the cap on purpose:
-  // the flag exists to answer "would this be refused", and refusing the question is the
-  // one answer that carries no information. `planned_chat_requests` equals
-  // `planned_chunks` because extraction sends one chat request per chunk.
-  if (params.dryRun === true) {
-    const planned = read.chunks.length;
-    res.status(200).json(
-      CompilePlan.parse({
-        dry_run: true,
-        planned_chunks: planned,
-        planned_chat_requests: planned,
-        cap: capRun.cap,
-        would_refuse: planned > capRun.cap,
-      }),
-    );
-    return;
-  }
-  try {
-    assertWithinExtractionRequestCap(read.chunks.length, capRun.cap);
-  } catch (error) {
-    // Only the cap's own refusal is answered here; anything else is a real failure and
-    // still reaches the harness's 500 handler.
-    if (!(error instanceof ExtractionRequestCapError)) throw error;
-    sendApiError(res, apiError(OVER_CAP_STATUS, error.message));
+  // hand. Whatever the plan or the refusal decides, it decides it before a provider is
+  // called and writes nothing.
+  if (sendPlanOrRefusal(res, read.chunks.length, request.dryRun, resolveExtractionRequestCap())) {
     return;
   }
   const compiled = await compileChunks({
     chunks: read.chunks,
     input: read.input,
-    params,
+    params: request.params,
     run,
     // The chunks are already stored, so this seam writes none of them: it reads them,
     // extracts, classifies and consolidates, which is the whole of phase two.

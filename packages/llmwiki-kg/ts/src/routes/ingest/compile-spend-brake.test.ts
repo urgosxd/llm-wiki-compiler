@@ -73,7 +73,7 @@ import {
   deleteFixtureRows,
   ingestUrl,
   skipReason,
-  stackSnapshot,
+  stackFingerprint,
   useDomainPrefix,
 } from "../ingest-harness.js";
 
@@ -190,7 +190,7 @@ afterEach(async () => {
 describe.skipIf(skipReason !== false)("compile refuses a run that exceeds the cap (S1, S2, S9)", () => {
   it("answers 413 with the cap sentence and leaves every row and counter untouched", async () => {
     const world = await ingested(app, LONG_BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
     // The premise of the case: more than one chunk, so "one below" is a real cap.
     expect(before.chunks).toBeGreaterThan(1);
     const cap = before.chunks - 1;
@@ -205,8 +205,9 @@ describe.skipIf(skipReason !== false)("compile refuses a run that exceeds the ca
     // smaller document".
     expect(response.body).toEqual({ detail: capRefusalMessage(before.chunks, cap) });
     // Nothing written: no entity, no relationship, no chunk mutation, no evidence row,
-    // no classification log entry, and no audit change on the document.
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    // no classification log entry, and no audit change on the document. The fingerprint
+    // carries a per-table digest, so an UPDATE fails this too.
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
     // Nothing spent: the refusal is decided before the first paid call.
     expect(toolCalls()).toBe(0);
     expect(embeddingCalls()).toBe(0);
@@ -216,7 +217,7 @@ describe.skipIf(skipReason !== false)("compile refuses a run that exceeds the ca
 describe.skipIf(skipReason !== false)("compile admits a run exactly at the cap (S6)", () => {
   it("extracts, writes the graph and sends one chat request per chunk", async () => {
     const world = await ingested(app, BODY);
-    const stored = await stackSnapshot(world.stackId);
+    const stored = await stackFingerprint(world.stackId);
     const cap = stored.chunks;
     setCap(String(cap));
     setToolResponse(Array.from({ length: cap }, () => ANSWER));
@@ -228,19 +229,22 @@ describe.skipIf(skipReason !== false)("compile admits a run exactly at the cap (
     // The boundary is INCLUSIVE: the cap is a maximum, not a strict bound.
     expect(response.body.chunks_read).toBe(cap);
     expect(toolCalls()).toBe(cap);
-    const after = await stackSnapshot(world.stackId);
+    const after = await stackFingerprint(world.stackId);
     // A cap satisfiable only by a path that does nothing would show here.
     expect(after.entities).toBeGreaterThan(stored.entities);
     expect(after.relationships).toBeGreaterThan(stored.relationships);
-    // And it read the stored chunks without rewriting them.
-    expect(after.chunks).toBe(stored.chunks);
+    // And it read the stored chunks without rewriting them: same rows, same CONTENT.
+    expect(after.digests.document_chunks).toBe(stored.digests.document_chunks);
+    // A successful compile does write `entity_source_documents`, which is counted here
+    // precisely so a refusal cannot leave that write unnoticed.
+    expect(after.sourceDocuments).toBeGreaterThan(stored.sourceDocuments);
   });
 });
 
 describe.skipIf(skipReason !== false)("compile refuses an unusable cap value (S9)", () => {
   it("answers 500 naming the variable and spends nothing", async () => {
     const world = await ingested(app, BODY);
-    const before = await stackSnapshot(world.stackId);
+    const before = await stackFingerprint(world.stackId);
     setCap("unlimited");
 
     const response = await request(app)
@@ -251,7 +255,7 @@ describe.skipIf(skipReason !== false)("compile refuses an unusable cap value (S9
     // the problem text is the cap module's own.
     expect(response.body).toEqual({ detail: invalidCapProblem("unlimited") });
     expect(response.body.detail).toContain(KG_EXTRACTION_REQUEST_CAP_ENV_VAR);
-    expect(await stackSnapshot(world.stackId)).toEqual(before);
+    expect(await stackFingerprint(world.stackId)).toEqual(before);
     expect(toolCalls()).toBe(0);
     expect(embeddingCalls()).toBe(0);
   });

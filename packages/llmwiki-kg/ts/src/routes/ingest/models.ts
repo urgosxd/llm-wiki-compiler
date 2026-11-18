@@ -95,13 +95,18 @@ export type CompileResultDto = z.infer<typeof CompileResult>;
  * - `dry_run` — always `true`. A literal rather than a boolean, because a payload that
  *   can say `false` can be mistaken for a completion.
  * - `planned_chunks` — the stored `document_chunks` rows this run would extract from.
- * - `planned_chat_requests` — the paid requests that implies. Extraction sends one chat
- *   request per chunk, so it equals `planned_chunks`; it is reported separately because
- *   the equal sign is a property of the extraction step, not of the chunk count, and a
- *   future change to how chunks are batched has exactly one place to show up.
+ * - `planned_chat_requests` — the chat requests that implies BEFORE RETRIES. Extraction
+ *   sends one chat request per chunk, so it equals `planned_chunks`; it is reported
+ *   separately because the equal sign is a property of the extraction step, not of the
+ *   chunk count, and a future change to how chunks are batched has exactly one place to
+ *   show up. A real run can issue MORE than this: `withProviderRetry` retries a transient
+ *   failure up to `TRANSIENT_ATTEMPTS` (3) times, so the bill can be up to three times
+ *   the plan. The cap bounds planned requests, not the final number of requests sent.
  * - `cap` — the bound in force for this deployment, so the comparison is auditable
  *   without knowing how the environment is configured.
- * - `would_refuse` — what the real run would do, computed from the two numbers beside it.
+ * - `would_refuse` — what the real run would do, obtained by asking the cap module's own
+ *   `assertWithinExtractionRequestCap` about `planned_chunks` and `cap` and catching its
+ *   refusal, so the plan and the real run cannot disagree about the boundary.
  */
 export const CompilePlan = z.object({
   dry_run: z.literal(true),
@@ -165,16 +170,24 @@ export const OntologyContractQuery = z.enum(INGEST_CONTRACTS);
 export const IngestQuery = z.object({
   synthesize_descriptions: pydanticBoolean().optional(),
   ontology_contract: OntologyContractQuery.optional(),
-  /**
-   * `?dry_run=` — plan this compile instead of running it.
-   *
-   * Read by the SAME parser as the two flags above, so it accepts exactly what they
-   * accept (`1`/`true`/`0`/`false`) and refuses anything else in the same query section
-   * of the same 422. Declared last so the reported order of query failures stays
-   * `synthesize_descriptions`, `ontology_contract`, `dry_run`.
-   *
-   * The ingest route shares this parser and ignores the flag: it is a compile override.
-   * The compile route answers a dry run with a {@link CompilePlan} and spends nothing.
-   */
+});
+
+/**
+ * Query-parameter validator for `dry_run` — the COMPILE route's own override.
+ *
+ * ## Why this is NOT in {@link IngestQuery}
+ *
+ * It was, and that was a contract defect: both routes share `parseIngestRequest`, so
+ * declaring the flag there made `POST .../ingest?dry_run=maybe` answer `422` where it has
+ * always answered `200` — an unrequested behaviour change on an existing public route.
+ * `dry_run` is a compile override, so it is validated on the COMPILE route alone (see
+ * `parseDryRun` in `compile.ts`) and ingest answers exactly as it did before the flag
+ * existed, for every value of it, garbage included.
+ *
+ * It accepts what `synthesize_descriptions` accepts (`1`/`true`/`0`/`false`) and refuses
+ * anything else in the same query section of the same `422`, reported AFTER the ingest
+ * parameters so the order stays `synthesize_descriptions`, `ontology_contract`, `dry_run`.
+ */
+export const CompileQuery = z.object({
   dry_run: pydanticBoolean().optional(),
 });

@@ -211,52 +211,165 @@ export interface StackSnapshot {
   readonly documents: readonly { readonly id: string; readonly audit: unknown }[];
 }
 
-/** The counters {@link stackSnapshot} reads, so {@link counted} stays exhaustive. */
-type Counted = "chunks" | "entities" | "relationships" | "evidence" | "log";
+/**
+ * Every tenant-scoped table whose stored content one compile can write.
+ *
+ * `entity_source_documents` is here because a SUCCESSFUL compile writes it — one row per
+ * entity/document pair — while it was the one table a counts-only snapshot left out, so
+ * the table most in need of a before/after proof had none.
+ */
+const FINGERPRINT_TABLES = [
+  "document_chunks",
+  "ontology_entities",
+  "ontology_relationships",
+  "kg_evidence",
+  "kg_classification_log",
+  "entity_source_documents",
+] as const;
+
+/** A fingerprinted table's name. */
+type FingerprintTable = (typeof FINGERPRINT_TABLES)[number];
+
+/** Every table the fingerprint reads, plus the document row whose `audit` it digests. */
+type Fingerprinted = FingerprintTable | "stack_documents";
+
+/** One table's stored state: how many rows, and a digest of every value in them. */
+interface TableState {
+  readonly rows: number;
+  readonly digest: string;
+}
+
+/** Per-table content digests, keyed by the table they cover so a failure names it. */
+export type StackDigests = Record<Fingerprinted, string>;
 
 /**
- * Reads the counters defensively: a missing row is a failed read, not a zero.
+ * What one Stack holds at CONTENT level, so "wrote nothing" is provable.
  *
- * Every field is a scalar subquery, so the read always returns exactly one row; an
- * absent row therefore means the read itself failed. Throwing keeps that a loud failure
- * instead of a snapshot of `-1`s that would compare equal to another failed read.
+ * The counts alone are not a proof. An `UPDATE` moves no count: bumping a `confidence`,
+ * rewriting a chunk's `content`, or moving a `last_seen_at`/`updated_at` leaves every
+ * `count(*)` and every document's `audit` blob exactly as they were, so a counts-only
+ * snapshot passes over a write that really happened. `digests` closes that: one digest
+ * per table over its ordered rows' full text, so a change in ANY column of ANY row fails.
+ *
+ * @see stackFingerprint
  */
-function counted(row: Record<Counted, number> | undefined): Record<Counted, number> {
-  if (row === undefined) throw new Error("the stack snapshot read returned no row");
-  return {
-    chunks: row.chunks,
-    entities: row.entities,
-    relationships: row.relationships,
-    evidence: row.evidence,
-    log: row.log,
-  };
+export interface StackFingerprint extends StackSnapshot {
+  /** Rows in `entity_source_documents`, which {@link StackSnapshot} does not count. */
+  readonly sourceDocuments: number;
+  readonly digests: StackDigests;
 }
 
 /**
- * Every row one Stack holds, counted, plus each document's audit blob.
+ * The per-table count-and-digest query: one `union all` branch per fingerprinted table.
  *
- * A refusal is proved to have written nothing by comparing this before and after: the
- * five counters cover the entity, relationship, chunk, evidence and classification-log
- * tables, and `documents` carries the `audit` blob a run would rewrite.
- *
- * Shared by every `ingest-*` suite that asserts a refusal left storage alone, so the
- * five counters are counted in exactly one place.
+ * Each branch digests `t::text` — the whole row, every column — over rows ordered by that
+ * same text, so the digest is a pure function of the stored values and is stable across
+ * runs. `stack_documents` digests `id` with its `audit` blob rather than the whole row:
+ * the document's file metadata is written by upload, and the blob is the part a compile
+ * rewrites.
  */
-export async function stackSnapshot(stackId: string): Promise<StackSnapshot> {
+function statesSql(stackId: string) {
+  return sql`
+    select 'document_chunks' as table_name, count(*)::int as row_count,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '') as digest
+      from document_chunks t where t.stack_id = ${stackId}
+    union all
+    select 'ontology_entities', count(*)::int,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '')
+      from ontology_entities t where t.stack_id = ${stackId}
+    union all
+    select 'ontology_relationships', count(*)::int,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '')
+      from ontology_relationships t where t.stack_id = ${stackId}
+    union all
+    select 'kg_evidence', count(*)::int,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '')
+      from kg_evidence t where t.stack_id = ${stackId}
+    union all
+    select 'kg_classification_log', count(*)::int,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '')
+      from kg_classification_log t where t.stack_id = ${stackId}
+    union all
+    select 'entity_source_documents', count(*)::int,
+           coalesce(md5(string_agg(t::text, '|' order by t::text)), '')
+      from entity_source_documents t where t.stack_id = ${stackId}
+    union all
+    select 'stack_documents', count(*)::int,
+           coalesce(md5(string_agg(sd.id::text || ':' || coalesce(sd.audit::text, 'null'), '|' order by sd.id)), '')
+      from stack_documents sd where sd.stack_id = ${stackId}
+  `;
+}
+
+/**
+ * Reads every fingerprinted table's row count and content digest in ONE round trip.
+ *
+ * A missing row is a failed read, not a zero — that is why the states are checked against
+ * the declared table list instead of being defaulted.
+ */
+async function readTableStates(tx: Database, stackId: string): Promise<Record<Fingerprinted, TableState>> {
+  const rows = await tx.execute<{ table_name: Fingerprinted; row_count: number; digest: string }>(
+    statesSql(stackId),
+  );
+  const states = {} as Record<Fingerprinted, TableState>;
+  for (const row of rows) {
+    states[row.table_name] = { rows: row.row_count, digest: row.digest };
+  }
+  const missing = [...FINGERPRINT_TABLES, "stack_documents" as const].filter(
+    (table) => states[table] === undefined,
+  );
+  if (missing.length > 0) {
+    throw new Error(`the stack fingerprint read returned no row for ${missing.join(", ")}`);
+  }
+  return states;
+}
+
+/**
+ * Every row one Stack holds: per-table row counts, a digest of their content, and each
+ * document's audit blob.
+ *
+ * This is the snapshot every refusal case asserts with `toEqual`, so "no entity, no
+ * relationship, no chunk mutation, no audit row, no ledger write" are compared rather
+ * than argued — and an `UPDATE` nobody asked for fails it.
+ */
+export async function stackFingerprint(stackId: string): Promise<StackFingerprint> {
   return withFixtureTenant(database(), { stackId }, async (tx) => {
-    const counts = await tx.execute<Record<Counted, number>>(sql`
-      select
-        (select count(*)::int from document_chunks where stack_id = ${stackId}) as chunks,
-        (select count(*)::int from ontology_entities where stack_id = ${stackId}) as entities,
-        (select count(*)::int from ontology_relationships where stack_id = ${stackId}) as relationships,
-        (select count(*)::int from kg_evidence where stack_id = ${stackId}) as evidence,
-        (select count(*)::int from kg_classification_log where stack_id = ${stackId}) as log
-    `);
+    const states = await readTableStates(tx, stackId);
     const documents = await tx.execute<{ id: string; audit: unknown }>(sql`
       select id, audit from stack_documents where stack_id = ${stackId} order by id
     `);
-    return { ...counted(counts[0]), documents };
+    return {
+      chunks: states.document_chunks.rows,
+      entities: states.ontology_entities.rows,
+      relationships: states.ontology_relationships.rows,
+      evidence: states.kg_evidence.rows,
+      log: states.kg_classification_log.rows,
+      sourceDocuments: states.entity_source_documents.rows,
+      digests: {
+        document_chunks: states.document_chunks.digest,
+        ontology_entities: states.ontology_entities.digest,
+        ontology_relationships: states.ontology_relationships.digest,
+        kg_evidence: states.kg_evidence.digest,
+        kg_classification_log: states.kg_classification_log.digest,
+        entity_source_documents: states.entity_source_documents.digest,
+        stack_documents: states.stack_documents.digest,
+      },
+      documents,
+    };
   });
+}
+
+/**
+ * The counts-only projection of {@link stackFingerprint}, kept for the one suite that
+ * pins its literal shape (`compile-route.test.ts`) and for the ingest suites that only
+ * need counts.
+ *
+ * Derived from the fingerprint rather than read again, so the SQL above is the single
+ * definition of what "this Stack's stored state" means.
+ */
+export async function stackSnapshot(stackId: string): Promise<StackSnapshot> {
+  const { chunks, entities, relationships, evidence, log, documents } =
+    await stackFingerprint(stackId);
+  return { chunks, entities, relationships, evidence, log, documents };
 }
 
 export function createTestApp(): Express {

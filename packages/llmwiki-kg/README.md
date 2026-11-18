@@ -280,8 +280,8 @@ set was built from.
 #### The extraction request cap
 
 Extraction sends **one chat request per stored chunk**, so a compile's cost is decided by
-the number of chunks the document yielded. That count is bounded per run by
-`LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` (a positive whole number, default `1000`).
+the number of chunks the document yielded — before retries. That count is bounded per run
+by `LLMWIKI_KG_MAX_EXTRACTION_REQUESTS` (a positive whole number, default `1000`).
 
 A compile whose chunk count exceeds the cap is **refused** with `413 Payload Too Large`,
 before any chat or embedding request is sent, and it writes nothing: no entity, no
@@ -315,12 +315,20 @@ shapes so a plan can never be mistaken for a completion:
 }
 ```
 
-`would_refuse` compares `planned_chunks` against the `cap` in force, so the same request
+`would_refuse` is the cap module's own verdict — the route asks
+`assertWithinExtractionRequestCap` about `planned_chunks` and `cap` and catches its refusal
+— so the plan and the real run cannot disagree about the boundary. The same request thus
 answers "what would this cost" and "would it be allowed" at once. A dry run is **never
 refused for cost** — an over-cap document still answers `200` with `would_refuse: true`,
 because refusing the question would deny the only information the flag provides. The real
 run on that document still answers `413`. An unusable cap value answers `500` for a dry
 run too: a misconfiguration is not a plan.
+
+`planned_chat_requests` counts **one planned request per chunk, before retries**. It is
+not the bill: `withProviderRetry` retries a transient provider failure up to
+`TRANSIENT_ATTEMPTS` (3) times, so a real run can send up to three times this many chat
+requests. The cap bounds planned requests, not the number of requests a run ends up
+sending — the same property the wiki dimension's cap has.
 
 ### AKS query interface (the spec-conformant surface)
 
