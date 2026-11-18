@@ -17,6 +17,7 @@
  * | Tool implementations | `mcp/handlers.ts` |
  * | Tool-call dispatch | `mcp/dispatch.ts` |
  * | Server construction | `mcp/server.ts` |
+ * | Shared-surface registration | `mcp/union.ts` |
  */
 
 export { AKS_API_KEY, AKS_BASE_URL, authHeaders } from "./mcp/config.js";
@@ -31,4 +32,5 @@ export {
 } from "./mcp/format.js";
 export { createMcpServer } from "./mcp/server.js";
 export { callTool, listTools } from "./mcp/dispatch.js";
+export { KG_UNION_TOOLS, UNION_YIELDS_TO_WIKI, registerKgToolsOn } from "./mcp/union.js";
 export type { FetchLike, McpDependencies } from "./mcp/handlers.js";

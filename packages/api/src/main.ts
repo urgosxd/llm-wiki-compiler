@@ -85,9 +85,10 @@
 import "./load-environment.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { createWikiMcpServer, startMCPServer } from "@repo/wiki/mcp";
-import { startHost } from "./host/server.js";
 import { createDimensionsPort } from "./dimensions/port.js";
+import { MCP_HTTP_PATH } from "./host/mcp-http.js";
+import { createUnionMcpServer, selfServedKgBaseUrl, startUnionMcpServer } from "./host/mcp-union.js";
+import { startHost, type McpBoundAddress } from "./host/server.js";
 import { buildViewerSnapshot } from "@repo/wiki/viewer-snapshot";
 import { hasNoResolvableStack } from "@repo/wiki/dimensions-stack-authority";
 import { buildReadyUrl, registerShutdown, resolveBindConfig, type BindOptions } from "./serve-bind.js";
@@ -134,8 +135,8 @@ const UNKNOWN_VERSION = "unknown";
 const USAGE = `Usage: api <command> [options]
 
 Commands:
-  host     Start the unified HTTP listener (viewer, graph, /api/ingest + /api/compile)
-  serve    Start an MCP server exposing wiki tools and resources over stdio
+  host     Start the unified HTTP listener (viewer, graph, MCP at ${MCP_HTTP_PATH}, /api/ingest + /api/compile)
+  serve    Start an MCP server exposing the wiki and knowledge-graph tools over stdio
 
 host options:
   --port <port>   Port to bind (default 0 — OS-assigned)
@@ -346,8 +347,22 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
     version,
     dimensionsPort,
     // The MCP-over-HTTP factory is built HERE because this module is imported by
-    // nothing: it is the one place a host→mcp edge cannot close a cycle.
-    mcpServerFactory: () => createWikiMcpServer({ root, version, dimensionsPort }),
+    // nothing: it is the one place a host→mcp edge cannot close a cycle. It serves the
+    // UNION — the wiki tools plus the graph tools — because one image that advertised
+    // different tool sets over its two transports would be the defect this feature closes.
+    mcpServerFactory: (bound: McpBoundAddress) => {
+      // In this mode the graph API the graph tools call IS the listener `startHost` is about
+      // to bind, so with no `AKS_BASE_URL` configured they are pointed at it. `--no-graph`
+      // mounts no graph surface, so there is nothing to point at and the configured value
+      // (or its loopback default) stands.
+      const kgBaseUrl = parsed.flags.has(NO_GRAPH) ? undefined : selfServedKgBaseUrl(bound);
+      return createUnionMcpServer({
+        root,
+        version,
+        dimensionsPort,
+        ...(kgBaseUrl === undefined ? {} : { kgBaseUrl }),
+      });
+    },
     ...(parsed.flags.has(NO_GRAPH) ? { includeGraph: false } : {}),
   });
   // The stop path is armed BEFORE the readiness line is written. "Ready" has to
@@ -365,13 +380,16 @@ async function runHost(parsed: LauncherArguments): Promise<void> {
 /**
  * Start the MCP server on stdio, rooted at `--root` or the current directory.
  *
+ * The union, not the wiki alone: `serve` is the container's DEFAULT surface, so a graph tool
+ * an agent cannot reach over stdio would be missing from the mode most consumers start.
+ *
  * @param parsed - What the caller supplied.
  */
 async function runServe(parsed: LauncherArguments): Promise<void> {
-  await startMCPServer({
+  await startUnionMcpServer({
     root: parsed.values.get("--root") ?? process.cwd(),
     version: resolveVersion(),
-    // REQUIRED by `startMCPServer`, which refuses at construction without it: the
+    // REQUIRED by the union starter, which refuses at construction without it: the
     // stdio surface is a container mode, so the port exists here or the process
     // fails loudly before it advertises tools it cannot honour.
     dimensionsPort: createDimensionsPort(),

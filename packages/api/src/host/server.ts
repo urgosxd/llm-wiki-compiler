@@ -109,6 +109,20 @@ const DEFAULT_HOST_ADDRESS = "127.0.0.1";
 /** The dimensions handle the mirror wrappers write through, named once instead of at each call. */
 type DimensionsHandle = ReturnType<typeof createDimensionsDatabase>["db"];
 
+/**
+ * The address a listener ACTUALLY bound.
+ *
+ * Distinct from the requested bind on purpose: `--port 0` is how every test and every
+ * container asks for an ephemeral port, and `0` is worthless to anything that has to CALL the
+ * listener. The factory below receives the resolved value, never the request.
+ */
+export interface McpBoundAddress {
+  /** The bound host, as configured (loopback unless the caller opted into a wider bind). */
+  readonly host: string;
+  /** The bound port, resolved by `listen`. */
+  readonly port: number;
+}
+
 /** How the host composes its two sub-apps. */
 export interface HostOptions {
   /** Frozen viewer snapshot; built by the caller so startup cost stays explicit. */
@@ -141,13 +155,13 @@ export interface HostOptions {
   /**
    * Builds an MCP server for one HTTP request, or absent to serve no MCP over HTTP.
    *
-   * INJECTED rather than imported. `host/server.ts` cannot reach `../mcp/**` without
-   * closing a cycle through `compiler-cli.ts`, the public barrel that re-exports
-   * `hostCommand` — measured with `fallow`, which reported three cycles (one per
-   * tools barrel) the moment such an import existed. The CLI entry builds it, since
-   * nothing imports the entry back.
+   * INJECTED rather than imported, for the cycle reason below, so this module only ever
+   * speaks HTTP to whatever it is handed. The argument is the address the listener ACTUALLY
+   * bound: a composed server whose tools call back into this same listener (the knowledge
+   * graph tools do exactly that) cannot address it from the requested bind, because `port: 0`
+   * only becomes a number after `listen`. A caller that needs no address ignores the argument.
    */
-  readonly mcpServerFactory?: () => {
+  readonly mcpServerFactory?: (bound: McpBoundAddress) => {
     connect(transport: unknown): Promise<void>;
     close(): Promise<void>;
   };
@@ -724,6 +738,34 @@ function isGraphPath(url: string | undefined): boolean {
 }
 
 /**
+ * Build the `(req, res)` handler that serves MCP over this listener.
+ *
+ * The factory is called per REQUEST with the address the listener ACTUALLY bound, read through
+ * `boundPortHolder`: `listen` is what turns `port: 0` into a number, so a factory closed over the
+ * REQUESTED port would hand every tool call a dead loopback URL. The holder is filled the moment
+ * `listen` returns, before the viewer handler exists, so no request can reach this handler while
+ * it still says `0` — the listener answers 503 until then.
+ *
+ * @param factory - The caller's server factory, which may ignore the address.
+ * @param host - The bound host, as configured.
+ * @param boundPortHolder - The holder the bound port is written into after `listen`.
+ * @returns The request handler for the MCP mount.
+ */
+function createMcpHttpHandler(
+  factory: NonNullable<HostOptions["mcpServerFactory"]>,
+  host: string,
+  boundPortHolder: { port?: number },
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return (req, res) =>
+    handleMcpHttp(
+      req,
+      res,
+      (() =>
+        factory({ host, port: boundPortHolder.port ?? 0 })) as Parameters<typeof handleMcpHttp>[2],
+    );
+}
+
+/**
  * Start the host and its listener.
  *
  * @param options - Snapshot, bind address, and sub-app selection.
@@ -803,11 +845,11 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // MCP over HTTP, on the same listener. Mounted only when this host serves a
   // project: the tools operate on a root, and a host with none would accept MCP
   // calls it cannot answer. Version comes from the caller so this module never
-  // reads package.json at runtime.
+  // reads package.json at runtime; the bound address reaches the factory per request
+  // (see `createMcpHttpHandler`).
   const mcpHandler = options.projectRoot === undefined || options.mcpServerFactory === undefined
     ? undefined
-    : (req: IncomingMessage, res: ServerResponse) =>
-        handleMcpHttp(req, res, options.mcpServerFactory as Parameters<typeof handleMcpHttp>[2]);
+    : createMcpHttpHandler(options.mcpServerFactory, host, boundPortHolder);
   const server = http.createServer((req, res) => {
     const handler = viewerHolder.handler;
     if (handler === undefined) {
