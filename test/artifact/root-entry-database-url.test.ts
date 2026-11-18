@@ -19,7 +19,7 @@
  *    a clobbering `DATABASE_URL="$AKS_DATABASE_URL"` — which would overwrite an operator's explicit
  *    value — fails here rather than in production.
  * 2. **The bridge runs before the explicit-command branch and before the mode dispatch.** The
- *    image's own schema runner is invoked as `docker run <image> sh -c 'scripts/apply-schemas.sh'`,
+ *    image's own schema runner is invoked as `docker run <image> sh -c '/app/scripts/apply-schemas.sh'`,
  *    which takes the `if [ "$#" -gt 0 ]; then exec "$@"` passthrough; a bridge below that branch
  *    would be dead on the very command that motivated it.
  * 3. **The script carries no configuration of its own.** No DSN literal, no URL with userinfo, no
@@ -143,7 +143,7 @@ describe("the published entrypoint wires the DSN before a caller's command can r
     expect(
       bridgeAt,
       `the bridge is at line ${bridgeAt + 1} and \`${PASSTHROUGH_BRANCH}\` is at line ${branchAt + 1}: a ` +
-        "bridge below that branch never runs for `docker run <image> sh -c 'scripts/apply-schemas.sh'`, " +
+        "bridge below that branch never runs for `docker run <image> sh -c '/app/scripts/apply-schemas.sh'`, " +
         "which is how the image's own schema runner is invoked and the exact command that exited 2 " +
         "without it",
     ).toBeLessThan(branchAt);
