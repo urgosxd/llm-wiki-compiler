@@ -57,9 +57,19 @@
  * named bound, because blocking shutdown forever on a database that is gone is a worse
  * failure than the one being fixed. A flush that runs out of bound NAMES the job ids it
  * left unwritten instead of pretending they landed.
+ *
+ * ## Why ONE job can also be drained on its own
+ *
+ * A DELETE has a hazard a flush cannot describe: `saveIngestJob` is an upsert, so a write
+ * still queued for a job commits AFTER that job's row was removed and INSERTS it again —
+ * the reported "it cannot be deleted" with a fresh timestamp. The delete therefore waits
+ * for that job's own chain first ({@link IngestJobMirrorQueue.drainJob}), and per job
+ * rather than by flushing everything: a delete of one row must not wait behind an
+ * unrelated job's slow write, which would turn one struggling job into "recovery is
+ * broken" for the whole host.
  */
 
-import type { JobRegistry } from "./registry.js";
+import type { JobRegistry, JobRegistryRecovery, RecoverableJobRegistry } from "./registry.js";
 import type { IngestJob } from "./types.js";
 import { saveIngestJob } from "./job-store.js";
 import type { DatabaseHandle } from "@repo/foundation";
@@ -97,6 +107,21 @@ export interface IngestJobMirrorQueue {
    * @returns The job ids still unwritten when the bound expired; empty when all landed.
    */
   flush(timeoutMs: number): Promise<readonly string[]>;
+  /**
+   * Await the writes queued for ONE job, up to `timeoutMs`.
+   *
+   * The narrow counterpart of {@link flush}, and the ordering a delete needs: it waits for
+   * that job's chain and no other, so a queued write cannot land after the row it rewrites
+   * was removed. The chain is captured when this is called: a write tracked WHILE it is
+   * awaiting belongs to a transition that happened after the caller asked, and a caller that
+   * must also stop those is relying on the `updated_at` guard in `job-store.ts`.
+   *
+   * @param jobId - The job whose queued writes must land first.
+   * @param timeoutMs - How long the caller is willing to wait.
+   * @returns True when everything queued for `jobId` had landed; false when the bound
+   *   expired first, which means a write for that job is still out there.
+   */
+  drainJob(jobId: string, timeoutMs: number): Promise<boolean>;
 }
 
 /** Longest delay a platform timer accepts; anything above it fires immediately. */
@@ -136,8 +161,43 @@ export function resolveMirrorFlushTimeoutMs(env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * Create one write queue.
+ * Build the per-job drain over one queue's write map and its timer seam.
  *
+ * A factory rather than a closure body because the queue's own constructor is already at the
+ * file's function budget, and this is one more behaviour it composes rather than contains.
+ *
+ * @param writes - The map from job id to that job's latest queued write.
+ * @param timers - The bound's timer seam, so a case can expire it by hand.
+ * @returns The drain, bounded by the caller's own timeout.
+ */
+function createJobDrain(
+  writes: Map<string, Promise<void>>,
+  timers: MirrorFlushTimers,
+): (jobId: string, timeoutMs: number) => Promise<boolean> {
+  return (jobId, timeoutMs) => {
+    const pending = writes.get(jobId);
+    // Nothing queued for this job: there is no ordering to wait for, and a caller must not
+    // wait out a bound it does not need.
+    if (pending === undefined) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      let answered = false;
+      const answer = (drained: boolean): void => {
+        if (answered) return;
+        answered = true;
+        resolve(drained);
+      };
+      const cancel = timers.schedule(timeoutMs, () => answer(false));
+      void pending.catch(() => undefined).then(() => {
+        cancel();
+        answer(true);
+      });
+    });
+  };
+}
+
+/**
+ * Create one write queue.
+ * *
  * Shared by every wrapper a host builds when it serves several Stacks, so shutdown flushes
  * once instead of walking wrappers that may already have been evicted. Two unrelated jobs
  * still never wait for each other: the chain is keyed by job id.
@@ -186,7 +246,7 @@ export function createIngestJobMirrorQueue(
     });
   };
 
-  return { track, flush };
+  return { track, drainJob: createJobDrain(writes, timers), flush };
 }
 
 /** What the wrapper needs beyond the registry it wraps. */
@@ -224,12 +284,13 @@ export interface DurableRegistryOptions {
 }
 
 /**
- * A durable registry: the live registry's contract, plus the bounded flush a close needs.
+ * A durable registry: the live registry's contract, plus the recovery drop and the bounded
+ * flush a close needs.
  *
- * The flush is the ONLY added method, and every {@link JobRegistry} method stays
- * synchronous, so no live-path caller can be made to wait for Postgres.
+ * Every {@link JobRegistry} method stays synchronous, so no live-path caller can be made to
+ * wait for Postgres.
  */
-export interface DurableJobRegistry extends JobRegistry {
+export interface DurableJobRegistry extends RecoverableJobRegistry {
   /**
    * Await this registry's in-flight mirror writes, up to a bound.
    *
@@ -337,6 +398,27 @@ export function createDurableJobRegistry(
     patchAttempts(id, attempts, now) {
       inner.patchAttempts(id, attempts, now);
       mirror(id);
+    },
+    /**
+     * Drop the live entry, and deliberately write nothing.
+     *
+     * The durable row is NOT mirrored from here. A delete has to be conditioned on the
+     * version it was decided on, and the live snapshot's `updatedAt` is not that version:
+     * the mirror is written AFTER the transition, so the row can be older than the live
+     * job. A write from this side would either fail the version guard — leaving a row the
+     * caller was told was gone — or, queued behind a pending write for the same job, put
+     * back a row that had just been deleted. `delete.ts` deletes the row at the version it
+     * read and only then asks the registry to drop the entry, which is the one order that
+     * cannot resurrect it.
+     */
+    delete(id) {
+      // The store this wraps is usually recoverable (`createJobRegistry` always is), but the
+      // parameter is the plain `JobRegistry` shape: a host that serves one wrapper per Stack
+      // builds delegating registries of exactly that shape. A store that cannot drop a job
+      // leaves this a no-op; it must not throw, because by the time this runs the durable
+      // row is already gone and an error here would report a failure that did not happen.
+      const drop = (inner as Partial<JobRegistryRecovery>).delete;
+      drop?.call(inner, id);
     },
     clear() {
       inner.clear();

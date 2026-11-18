@@ -296,6 +296,31 @@ export const INGEST_JOB_MIRROR_FLUSH_TIMEOUT_ENV_VAR = "LLMWIKI_INGEST_JOB_FLUSH
  */
 export const INGEST_JOB_MIRROR_FLUSH_TIMEOUT_MS_DEFAULT = 5_000;
 
+/**
+ * Env var that overrides how long a job may go without progress before its status says so.
+ *
+ * A row that never settles is the reported hang: the operator polls a job that will not
+ * move and cannot tell a slow ingest from a process that died. Past this bound a status
+ * READ reports that as a derived observation, and the reaper settles such rows on the
+ * same bound, so the two must read the same number.
+ */
+export const INGEST_JOB_STUCK_AFTER_ENV_VAR = "LLMWIKI_INGEST_JOB_STUCK_AFTER_MS";
+
+/**
+ * Default silence after which an unsettled job is reported stuck (two hours).
+ *
+ * WHY TWO HOURS. The bound must not fire during a normal long ingest, and the longest
+ * legal silence is one provider request: 30 minutes for the local Ollama backend, 10 for
+ * the cloud default. Two hours is four times the slowest of those, so a job waiting on a
+ * single completion cannot be called dead. Every stage that can run longer than that
+ * refreshes `updated_at` as it works — compile progress per page, embeddings detail per
+ * batch — so this bound measures silence with NO observable progress, not slowness. The
+ * number is deliberately generous rather than tight: it is what makes "the owning process
+ * may have stopped" true often enough to act on, and a bound that cries wolf on a healthy
+ * compile teaches an operator to ignore it.
+ */
+export const INGEST_JOB_STUCK_AFTER_MS_DEFAULT = 2 * 60 * 60 * 1000;
+
 /** Output paths relative to the project root for export artifacts. */
 export const EXPORT_DIR = "dist/exports";
 

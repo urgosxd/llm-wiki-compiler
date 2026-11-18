@@ -237,13 +237,16 @@ pages and `state.json` intact.
 |---|---|---|
 | `LLMWIKI_REQUEST_TIMEOUT_MS` | Provider built-in default (10 min for `openai`, 30 min for `ollama`) | Per-request timeout override in milliseconds. Applies to both the `openai` and `ollama` backends. When unset, each provider falls back to its own built-in default |
 | `OLLAMA_TIMEOUT_MS` | 30-minute `ollama` built-in default | Ollama-specific timeout override in milliseconds. Wins over `LLMWIKI_REQUEST_TIMEOUT_MS` when both are set |
-| `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS` | 5 seconds (`INGEST_JOB_MIRROR_FLUSH_TIMEOUT_MS_DEFAULT`) | How long a host shutdown waits for in-flight `wiki.ingest_job` mirror writes before it stops waiting. Waiting is what keeps a restart from leaving a row that says `running` forever; the bound is what keeps a database that is already gone from holding the process open. A flush that runs out of bound logs the job ids it left unwritten |
+| `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS` | 5 seconds (`INGEST_JOB_MIRROR_FLUSH_TIMEOUT_MS_DEFAULT`) | How long a host shutdown waits for in-flight `wiki.ingest_job` mirror writes before it stops waiting. Waiting is what keeps a restart from leaving a row that says `running` forever; the bound is what keeps a database that is already gone from holding the process open. A flush that runs out of bound logs the job ids it left unwritten. The boot-time reaper below waits at most this long for its own database round trip, so a restart can never be held open by it |
+| `LLMWIKI_INGEST_JOB_STUCK_AFTER_MS` | 2 hours (`INGEST_JOB_STUCK_AFTER_MS_DEFAULT`) | How long an ingest job may go without its `updated_at` moving before it counts as stuck. ONE bound governs three things: a status read reports the stall (`statusReason` becomes `{ kind: "derived", reason: "no progress since <timestamp>; the owning process may have stopped" }`), `DELETE /api/ingest/jobs/:jobId` and `POST /api/ingest/jobs/:jobId/retry` accept the job as recoverable, and the reaper that runs once at host boot settles it. The reaper SETTLES and never deletes: the row stays visible with a terminal state whose `error` reads `abandoned: no update since <timestamp>; the process that owned it stopped` — a derived conclusion, not a reported failure, which is why such a row reports `statusReason.kind: "derived"` from the `abandonedAt` marker it carries instead of the sentence's wording — and it stays there until an operator deletes it. It never settles a job the running process still holds, and a job that moved inside this bound is left alone. Two hours is four times the slowest provider default (30 min for `ollama`), and every stage that can run longer publishes progress, so this measures silence with no observable progress rather than slowness |
 
 Timeout resolution for Ollama: explicit constructor option → `OLLAMA_TIMEOUT_MS` → `LLMWIKI_REQUEST_TIMEOUT_MS` → built-in 30-minute default.
 
 Non-numeric, zero, or negative values are silently ignored and the next source in the chain is used.
 
 `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS` follows the same rule: unset, empty, non-numeric, zero or negative falls back to the 5-second default, so the shutdown bound is never accidentally "wait forever" (a zero would mean that) or negative.
+
+`LLMWIKI_INGEST_JOB_STUCK_AFTER_MS` follows the same rule too: unset, empty, non-numeric, zero or negative falls back to the 2-hour default. A zero would report every freshly written row as stuck the instant it appeared, which is the same class of mistake as no bound at all in the other direction.
 
 ---
 

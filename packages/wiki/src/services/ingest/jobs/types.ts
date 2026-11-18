@@ -197,6 +197,16 @@ export interface CompileDimensionState {
   readonly detail?: CompileDetail;
   readonly message?: string;
   readonly error?: string;
+  /**
+   * True when a retry is the operator's next step AND a status surface offers one.
+   *
+   * Set by a status READ for a `busy` compile and never written by the mirror: `busy`
+   * is settled (see `isSettled` in `registry.ts`), nothing transitions it onward, so the
+   * transition out of it is an explicit retry. Absent means no retry is being offered —
+   * never "retrying is pointless". Optional, so a row stored before this field existed
+   * reads back unchanged.
+   */
+  readonly retryable?: boolean;
 }
 
 /**
@@ -224,6 +234,58 @@ export interface IngestJob {
   readonly updatedAt: string;
   readonly ingest: IngestDimensionState;
   readonly compile: CompileDimensionState;
+  /**
+   * Why this job is in the state it is in, as a status READ could tell.
+   *
+   * Attached by the read (`status.ts`) and NEVER written by the mirror, which stores the
+   * live registry's own snapshot: a derived observation must not be persisted, or the
+   * next read would quote this read's guess as if the pipeline had reported it. Optional,
+   * so a row stored without it — every row written before this field existed — reads back
+   * as it always did and the store's shape guard is unaffected.
+   */
+  readonly statusReason?: JobStatusReason;
+  /**
+   * The instant this row last moved, when it is non-terminal and silent past the bound.
+   *
+   * A DERIVED fact, kept in its own field rather than folded into {@link statusReason}: a
+   * row can be both failed and silent (reproduction pair 3 was exactly that), and an
+   * operator needs "it failed" from "and nothing has touched it since" as two facts. Like
+   * `statusReason`, it is attached by a status read and never written by the mirror, and
+   * it is optional so a row stored without it reads back unchanged.
+   */
+  readonly stalledSince?: string;
+  /**
+   * The instant a reap concluded this job was abandoned, ISO-8601.
+   *
+   * The machine-readable provenance of the sentence in `ingest.error`/`compile.error`, and the
+   * reason it exists at all: a reap INFERS that the owning process stopped — nobody observed a
+   * failure — so a read must be able to report that conclusion as derived instead of quoting it
+   * as something a pipeline reported. The answer is therefore taken from THIS field and never
+   * from the text: a read that classified by matching the sentence would be one wording change
+   * away from calling an inference an observation.
+   *
+   * Written by `reaper.ts` and by nothing else, beside the terminal snapshot it settles. Absent
+   * everywhere else: the mirror stores the live registry's own snapshot, a normally failed row
+   * carries no marker and keeps reporting `kind: "observed"`, and an optional field means every
+   * row stored before it existed reads back unchanged.
+   */
+  readonly abandonedAt?: string;
+}
+
+/**
+ * The explanation a status read attaches: the text, and where the claim comes from.
+ *
+ * `kind` is the part an operator must not have to guess at. An `observed` reason quotes
+ * something a pipeline actually recorded (a failure's error, a `busy` settle); a
+ * `derived` one is this read's inference from an old timestamp. They read the same in a
+ * UI only if the difference is thrown away, and "the process stopped" is a very
+ * different instruction from "the upload failed".
+ */
+export interface JobStatusReason {
+  /** Human-facing explanation of the current state. */
+  readonly reason: string;
+  /** Whether a pipeline reported this, or a read inferred it. */
+  readonly kind: "observed" | "derived";
 }
 
 /**

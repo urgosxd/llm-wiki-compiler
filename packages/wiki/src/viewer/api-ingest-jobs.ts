@@ -22,6 +22,11 @@
  * cancelling is not offered at all: the mutation lock is fail-fast, so a job that
  * is running is a process already inside the transaction, and "cancel" would mean
  * killing a half-applied write.
+ *
+ * Explaining a state is the one thing it DOES add. Every answer passes through
+ * `withStatusReason`, which returns a NEW snapshot — the stored row and the live registry
+ * record are never edited by a read, so a status read cannot become a recovery action by
+ * accident.
  */
 
 import type { ServerResponse } from "node:http";
@@ -34,6 +39,8 @@ import {
 } from "./respond.js";
 import type { StackRefusal } from "./respond.js";
 import type { JobRegistry } from "../services/ingest/jobs/registry.js";
+import { resolveIngestJobStuckAfterMs, withStatusReason } from "../services/ingest/jobs/status.js";
+import type { JobStatusOptions } from "../services/ingest/jobs/status.js";
 import { stackIdProblem } from "@repo/foundation";
 import { createDimensionsDatabase, isDatabaseConfigured } from "../dimensions/activation.js";
 import { stackResolution } from "../services/stacks/stack-store.js";
@@ -118,6 +125,23 @@ function registryFrom(deps: Record<string, unknown>): JobRegistry | undefined {
   return candidate === undefined ? undefined : (candidate as JobRegistry);
 }
 
+/**
+ * The clock and the bound this request's derived status is computed against.
+ *
+ * Resolved once per request rather than per job: one answer about several rows must
+ * describe them at one instant, or two jobs can disagree about whether the same silence
+ * counts as stuck. `now` is injectable so a host — or a test — can pin the instant the
+ * bound is measured from, which is what keeps a derived reason free of wall-clock timing.
+ *
+ * @param deps - Viewer dependencies, which may carry a `now` clock.
+ * @returns The options every job in this response is described with.
+ */
+function statusOptionsFrom(deps: Record<string, unknown>): JobStatusOptions {
+  const candidate = deps.now;
+  const now = typeof candidate === "function" ? (candidate as () => Date)() : new Date();
+  return { now, stuckAfterMs: resolveIngestJobStuckAfterMs() };
+}
+
 /** The per-Stack reads a caller named, or `undefined` when they named none. */
 function namedStackReads(
   durable: DurableJobReads | undefined,
@@ -145,8 +169,11 @@ function namedStackReads(
  * @returns Jobs with no duplicate ids.
  */
 async function collectionJobs(reads: Reads): Promise<readonly unknown[]> {
-  if (reads.named !== undefined) return reads.named.list(DURABLE_LIST_LIMIT);
-  return mergedJobs(reads.registry, reads.durable);
+  const jobs = reads.named !== undefined
+    ? await reads.named.list(DURABLE_LIST_LIMIT)
+    : await mergedJobs(reads.registry, reads.durable);
+  // Explained AFTER ordering, so the added field can never influence the sort.
+  return jobs.map((job) => withStatusReason(job, reads.status));
 }
 
 /**
@@ -212,7 +239,12 @@ export async function handleApiIngestJobs(
       return;
     }
   }
-  await answerJobRead(res, request.jobId, { registry, durable: durableFrom(deps), named: request.named });
+  await answerJobRead(res, request.jobId, {
+    registry,
+    durable: durableFrom(deps),
+    named: request.named,
+    status: statusOptionsFrom(deps),
+  });
 }
 
 /**
@@ -248,6 +280,8 @@ interface Reads {
   readonly registry: JobRegistry;
   readonly durable: DurableJobReads | undefined;
   readonly named: ReturnType<NonNullable<DurableJobReads["forStack"]>> | undefined;
+  /** Clock and stuck bound for the reason this response attaches. */
+  readonly status: JobStatusOptions;
 }
 
 /** What the caller asked for: a Stack (maybe), and a job id (maybe). */
@@ -306,7 +340,7 @@ async function writeOneJob(res: ServerResponse, jobId: string, reads: Reads): Pr
     writeJsonError(res, 404, "job_not_found", `no ingest job '${jobId}'`);
     return;
   }
-  writeJson(res, 200, job);
+  writeJson(res, 200, withStatusReason(job, reads.status));
 }
 
 /**

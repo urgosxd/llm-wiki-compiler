@@ -105,6 +105,32 @@ export interface JobRegistry {
 }
 
 /**
+ * The recovery operation a live registry offers BESIDE {@link JobRegistry}.
+ *
+ * ## Why this is not a member of `JobRegistry`
+ *
+ * Not every `JobRegistry` can drop a job: a host that serves one wrapper per Stack builds its
+ * registry as a delegating object over those wrappers (`packages/api/src/host/server.ts`), and
+ * making `delete` required there would either force that surface to invent an answer or change
+ * a contract it has not decided yet. Kept as a separate capability, a caller that needs the
+ * operation asks for it by name, and a registry that cannot drop a job simply does not offer it.
+ *
+ * ## Why it is the RECOVERY operation, not a test seam
+ *
+ * {@link JobRegistry.clear} drops everything and exists for suites; this one removes a single job
+ * because an operator asked for it. The durable row is not this method's business: `delete.ts`
+ * deletes that at the version it decided on and only then asks the registry to drop the entry,
+ * so a surface never shows a cleared live view for a delete that did not happen.
+ */
+export interface JobRegistryRecovery {
+  /** Drop `id` from the live view. No-op for an unknown id. */
+  delete(id: string): void;
+}
+
+/** A live registry that can also drop one job on request. */
+export type RecoverableJobRegistry = JobRegistry & JobRegistryRecovery;
+
+/**
  * Evict the oldest settled job until the store is under {@link MAX_JOBS}.
  *
  * In-flight jobs are skipped rather than counted as evictable. If every retained
@@ -175,7 +201,7 @@ function mergeCompile(
  *
  * @returns A registry with no jobs.
  */
-export function createJobRegistry(): JobRegistry {
+export function createJobRegistry(): RecoverableJobRegistry {
   const jobs = new Map<string, IngestJob>();
 
   return {
@@ -221,6 +247,10 @@ export function createJobRegistry(): JobRegistry {
       const job = jobs.get(id);
       if (job === undefined) return;
       jobs.set(id, withPatch(job, { ingest: { attempts } }, now));
+    },
+
+    delete(id) {
+      jobs.delete(id);
     },
 
     clear() {

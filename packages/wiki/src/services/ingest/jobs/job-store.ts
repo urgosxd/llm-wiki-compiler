@@ -63,8 +63,13 @@ const DEFAULT_LIST_LIMIT = 50;
 /** Largest listing this module will return, so one call cannot read the table. */
 const MAX_LIST_LIMIT = 200;
 
-/** True when the row's snapshot is a shape this module can hand back. */
-function isIngestJob(value: unknown): value is IngestJob {
+/**
+ * True when the row's snapshot is a shape this module can hand back.
+ *
+ * Exported because the reaper reads rows straight from the table as well
+ * (`reaper.ts`), and a second copy of this guard is a second definition of "readable".
+ */
+export function isIngestJob(value: unknown): value is IngestJob {
   const candidate = value as Partial<IngestJob> | null;
   return (
     candidate !== null &&
@@ -124,14 +129,108 @@ export async function readIngestJob(
   stackId: string,
   jobId: string,
 ): Promise<IngestJob | undefined> {
+  return (await readIngestJobVersion(db, stackId, jobId))?.job;
+}
+
+/** One stored job, together with the version the DATABASE holds for the row. */
+export interface StoredIngestJob {
+  /** The snapshot, as a reader sees it. */
+  readonly job: IngestJob;
+  /**
+   * `wiki.ingest_job.updated_at` as the database itself prints it, in ISO 8601 with whatever
+   * precision the column holds — microseconds included.
+   *
+   * NOT `job.updatedAt`. The payload travels through JSON, and a writer can truncate it to
+   * milliseconds (or to anything else) before it is stored, so the payload's copy of the
+   * instant is a CLAIM about the row rather than the row's identity. Anything that has to
+   * recognise the same row version later — a conditional delete, which is irreversible — has
+   * to carry this value instead.
+   */
+  readonly version: string;
+}
+
+/**
+ * Read one job together with the row version the database reports for it.
+ *
+ * ## Why the version comes from the column and not from the payload
+ *
+ * A delete is irreversible and is conditioned on "has this row changed since I read it?".
+ * Answering that with `payload.updatedAt` compared against the column answers a different
+ * question — "does the payload spell the column's instant exactly?" — and the answer is no
+ * whenever the stored column carries microseconds the payload cannot (`now()` on a column, a
+ * `MS`-formatted payload, any foreign writer). The measured consequence was a row that could
+ * never be deleted: every attempt refused as `job_changed`, permanently.
+ *
+ * So the read returns the COLUMN's own value, printed by the database, and the conditional
+ * delete compares column against column. The guard keeps its meaning — a row that moved on is
+ * still refused — and stops depending on how faithfully a payload was serialised.
+ *
+ * @param db - Database handle.
+ * @param stackId - Tenant the caller is asking about.
+ * @param jobId - `ing_<ULID>` identity.
+ * @returns The snapshot and its row version, or `undefined` when no readable row exists.
+ */
+export async function readIngestJobVersion(
+  db: Database,
+  stackId: string,
+  jobId: string,
+): Promise<StoredIngestJob | undefined> {
   const rows = await withTenant(db, stackId, async (tx) =>
-    tx.execute<{ payload: unknown }>(sql`
-      select payload from wiki.ingest_job
+    tx.execute<{ payload: unknown; version: string }>(sql`
+      select payload, to_json(updated_at) #>> '{}' as version
+      from wiki.ingest_job
       where stack_id = ${stackId} and job_id = ${jobId}
     `),
   );
-  const payload = rows[0]?.payload;
-  return isIngestJob(payload) ? payload : undefined;
+  const row = rows[0];
+  if (row === undefined || !isIngestJob(row.payload)) return undefined;
+  return { job: row.payload, version: String(row.version) };
+}
+
+/**
+ * Delete one job row, but only the version the caller decided on.
+ *
+ * ## Why the version is part of the operation
+ *
+ * A delete is irreversible, and the decision to allow it was taken from a snapshot read a
+ * moment earlier. Between those two reads the job can move: a stalled row can resume, and a
+ * row that resumed is work in progress that must NOT be dropped. So the statement carries
+ * the row version it was decided on, and a row that has moved since matches nothing — the
+ * caller learns that nothing was deleted instead of losing a live job.
+ *
+ * `updated_at` only moves forward here (see this file's upsert guard), so "the same
+ * version" and "not newer than the version read" are the same test.
+ *
+ * ## Why the version must be the COLUMN's, not the payload's
+ *
+ * This comparison decides whether a row is the one the caller read, so it can only be made
+ * against a value the database produced. `expectUpdatedAt` is therefore what
+ * {@link readIngestJobVersion} returned, never `job.updatedAt`: a payload can be truncated to
+ * milliseconds on the way in, and comparing it to a microsecond column refuses EVERY delete
+ * of that row — the reported "no hay manera de eliminarlo" reintroduced as a precision
+ * mismatch, with no way out for the operator.
+ *
+ * @param db - Database handle.
+ * @param stackId - Tenant the job belongs to; also what the RLS policy binds.
+ * @param jobId - `ing_<ULID>` identity.
+ * @param expectUpdatedAt - The row version the database reported for this job; see above.
+ * @returns True when the row was removed; false when it is absent or has moved on.
+ */
+export async function deleteIngestJobAtVersion(
+  db: Database,
+  stackId: string,
+  jobId: string,
+  expectUpdatedAt: string,
+): Promise<boolean> {
+  const removed = await withTenant(db, stackId, async (tx) =>
+    tx.execute<{ job_id: string }>(sql`
+      delete from wiki.ingest_job
+      where stack_id = ${stackId} and job_id = ${jobId}
+        and updated_at = ${expectUpdatedAt}::timestamptz
+      returning job_id
+    `),
+  );
+  return removed.length > 0;
 }
 
 /**

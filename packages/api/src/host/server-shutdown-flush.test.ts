@@ -72,6 +72,9 @@ function countedQueue(timers: ControlledTimers): { queue: IngestJobMirrorQueue; 
   return {
     queue: {
       track: (jobId, write) => inner.track(jobId, write),
+      // Forwarded, not counted: the delete's per-job drain is not a flush, and a decorator that
+      // dropped it would leave the host ordering nothing behind its own mirror writes.
+      drainJob: (jobId, timeoutMs) => inner.drainJob(jobId, timeoutMs),
       flush: (timeoutMs) => {
         flushes += 1;
         return inner.flush(timeoutMs);
