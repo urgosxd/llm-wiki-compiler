@@ -127,18 +127,37 @@ async function withOrdinaryMutationLock<T>(root: string, fn: () => Promise<T>): 
  * Fail-fast is right for a request handler: a caller waiting on an HTTP request should be
  * told the project is busy rather than held open behind a compile.
  *
+ * ## The environment is the request's, and it must reach BOTH halves
+ *
+ * A caller that serves many Stacks from one process resolves one Stack per request and
+ * carries it in the environment it passes here. Acquiring without it made the lock read
+ * `process.env` instead, so the ingest half took the PATH-keyed file lock while the
+ * compile half of the same operation took the Stack-keyed advisory lock: two different
+ * locks for one operation, and two Stacks colliding on one path key.
+ *
+ * The release is the other half and is not optional. `releaseLock` looks the held
+ * connection up in `lockRegistry` under the key IT derives from the environment it is
+ * given, so acquiring under a request's Stack and releasing under `process.env` finds
+ * nothing, falls through to a file lock that was never written, and leaves the
+ * session-level advisory lock held on the caller's reserved connection until the process
+ * dies. That is why the `finally` below releases with the SAME `options.env`.
+ *
  * @param root - Absolute project root.
  * @param fn - The mutation, run while the lock is held.
- * @returns The mutation's result, or undefined when the lock was busy.
+ * @param options - The caller's environment (the Stack it resolved), passed through to
+ *   {@link acquireMutationLock} AND to the release; omitting it keeps the ambient
+ *   `process.env` behaviour every existing caller has.
+ * @returns The mutation's result, or `busy` when the lock was held elsewhere.
  */
 export async function tryWithOrdinaryMutationLock<T>(
-  root: string, fn: () => Promise<T>,
+  root: string, fn: () => Promise<T>, options: AcquireLockOptions = {},
 ): Promise<{ busy: true } | { busy: false; value: T }> {
-  const acquired = await acquireMutationLock(root, "ordinary");
+  const acquired = await acquireMutationLock(root, "ordinary", options);
   if (!acquired) return { busy: true };
   try {
     return { busy: false, value: await fn() };
   } finally {
-    await releaseLock(root);
+    // Symmetric with the acquire above, including the throwing path: see the header.
+    await releaseLock(root, options.env);
   }
 }

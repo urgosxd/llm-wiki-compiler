@@ -245,6 +245,13 @@ async function writeToDimensions(
   // reads it.
   const dimensionsDb = createDimensionsDatabase(env);
   observer?.ingest.stage("preparing");
+  // The request's OWN environment is handed to the lock, because it is what names the
+  // Stack: `buildIngestEnv(stackId)` computed it upstream and every seam below reads it
+  // (`resolveStackAuthority`, the dimensions, the journal). Without it the lock read
+  // `process.env`, so an ingest for a named Stack took the PATH-keyed file lock while the
+  // compile half of the same request took the Stack-keyed advisory lock -- two locks for
+  // one operation, and two Stacks colliding on one path key. It is the same value, in the
+  // same position, that the rest of this transaction already uses; no second resolution.
   const locked = await tryWithOrdinaryMutationLock(root, async () => {
     try {
       const authority = await resolveStackAuthority({
@@ -260,7 +267,7 @@ async function writeToDimensions(
     } finally {
       await dimensionsDb.close();
     }
-  });
+  }, { env });
   if (locked.busy) {
     // The project's existing lock error: callers already branch on it.
     throw new LockBusyError(0);
