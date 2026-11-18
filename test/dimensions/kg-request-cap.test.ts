@@ -161,6 +161,9 @@ function dimension(dryRun?: boolean): Dimension {
     stackName: "cap fixture",
     ...(dryRun === true ? { dryRun: true } : {}),
     loadOntology: async () => undefined,
+    // Injected for the same reason, and it states the case a cap is counted on: no
+    // chunk was ever extracted for this source, so every chunk is pending.
+    readExtractedChunkHashes: async () => new Set<string>(),
   });
 }
 

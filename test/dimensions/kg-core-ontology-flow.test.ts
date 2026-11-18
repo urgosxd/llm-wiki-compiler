@@ -39,7 +39,11 @@ vi.mock("@repo/kg", async () => {
     forgetDocumentRows,
     createClient: vi.fn(() => ({ end: vi.fn() })),
     createDatabase: vi.fn(() => ({
-      transaction: async (run: (tx: unknown) => Promise<void>) => run({}),
+      // The handle carries `execute` because `commit` records the run's extracted
+      // chunk hashes on the caller's own handle, and that ledger write is a statement
+      // issued on it rather than a barrel function this suite can replace.
+      transaction: async (run: (tx: unknown) => Promise<void>) =>
+        run({ execute: vi.fn(async () => []) }),
     })),
     ...prepareCoreExports(core, "postgres://invalid/none"),
   };
@@ -77,6 +81,9 @@ async function commitWith(extraction: Record<string, unknown>) {
     stackName: "demo",
     ontology: ONTOLOGY,
     loadOntology: async () => undefined,
+    // Injected for the same reason: the default ledger reader opens the graph
+    // database, and this suite replaces the vendored core wholesale.
+    readExtractedChunkHashes: async () => new Set<string>(),
     // The provider layer is replaced here, so no embedding backend is reported:
     // the default resolver would consult the machine's own provider environment.
     describeEmbeddingBackend: () => undefined,
@@ -106,6 +113,9 @@ describe("kg dimension with a declared ontology", () => {
       stackId: "s",
       stackName: "demo",
       ontology: ONTOLOGY,
+      // Same injection as `commitWith`: nothing was extracted for this source yet,
+      // so the write the assertion reads is reached with every chunk pending.
+      readExtractedChunkHashes: async () => new Set<string>(),
       describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
@@ -151,6 +161,7 @@ describe("kg dimension without an ontology", () => {
       stackId: "s",
       stackName: "demo",
       loadOntology: async () => undefined,
+      readExtractedChunkHashes: async () => new Set<string>(),
       describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 

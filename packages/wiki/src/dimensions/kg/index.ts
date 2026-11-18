@@ -37,6 +37,16 @@
  * Neither door changes the chunk boundaries a real run produces: both count with the same
  * chunker, the same default size and the same overlap.
  *
+ * ## The third door: a chunk whose text was already extracted FOR THIS SOURCE
+ *
+ * `prepare` also skips the chunks this source has already paid for. Every chunk arrives with
+ * the `content_hash` `chunkAndEmbed` computed, and the hashes already recorded for this Stack
+ * and source are read through an injected reader ({@link
+ * KgDimensionOptions.readExtractedChunkHashes}) before the extraction call. Only the chunks
+ * whose hash is absent are sent, and a run whose every chunk was already extracted makes NO
+ * extraction call at all. A first ingest is untouched by this, which is the only thing S2
+ * allows to matter: same chunks, same order, same prompt.
+ *
  * ## Credentials and database
  *
  * The vendored core reads provider credentials and `DATABASE_URL` from the
@@ -97,12 +107,15 @@ import {
 } from "@repo/kg";
 import { defaultOntology, loadStoredOntology } from "@repo/kg";
 import type { DatabaseHandle } from "@repo/foundation";
-import type { ExtractionResult, Ontology } from "@repo/kg";
+import type { ExtractionOutcome, ExtractionResult, Ontology } from "@repo/kg";
 
 import {
   assertWithinExtractionRequestCap,
   resolveExtractionRequestCap,
 } from "./request-cap.js";
+
+import { createLedgerReader, recordExtractedChunkHashes } from "./chunk-reuse.js";
+import type { ExtractedChunkHashesReader } from "./chunk-reuse.js";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";
@@ -119,6 +132,29 @@ type KgRejection = NonNullable<ExtractionResult["rejected"]>[number];
 
 /** Seconds to wait for the graph database before giving up. */
 const DB_CONNECT_TIMEOUT_SECONDS = 10;
+
+/** No chunk text has been extracted for this source, so every chunk is pending. */
+const NOTHING_REUSED: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The extraction a fully-reused run reports: nothing was sent, so nothing came back.
+ *
+ * Deliberately NOT `extractGraphFromChunks` with an empty list: that call is free (it
+ * early-returns before any request) but the vendored early return answers a document that
+ * produced no CHUNKS, which is a different fact from every chunk having been reused. `model`
+ * and `pipeline` are empty because this run asked no model; nothing reads either field.
+ */
+/**
+ * The extraction a fully-reused run reports: nothing was sent, so nothing came back.
+ *
+ * Deliberately NOT `extractGraphFromChunks` with an empty list: that call is free (it
+ * early-returns before any request) but the vendored early return answers a document that
+ * produced no CHUNKS, which is a different fact from every chunk having been reused. `model`
+ * and `pipeline` are empty because this run asked no model; nothing reads either field.
+ */
+const NO_CHUNKS_EXTRACTED: ExtractionOutcome = {
+  entities: [], relationships: [], model: "", pipeline: "",
+};
 
 /** Chars of a source digest kept in an in-memory chunk label. */
 const SOURCE_LABEL_CHARS = 32;
@@ -201,6 +237,17 @@ interface KgHandle {
    * never have produced. Neither is fatal, and neither makes the ingest fail.
    */
   readonly mangledChunks: number;
+  /** Chunks whose hash was already extracted for this source, so no model saw them. */
+  readonly reusedChunks: number;
+  /** Chunks this run actually sent to the model, and therefore the failed-count's base. */
+  readonly extractedChunks: number;
+  /**
+   * Hashes of {@link KgHandle.extractedChunks}, recorded by `commit` in its transaction.
+   *
+   * A reused chunk's hash is NEVER here: it is already recorded, and writing it again would
+   * make the ledger read as if the work had been redone.
+   */
+  readonly extractedHashes: readonly string[];
   /**
    * `type` values the model emitted outside the schema its Stack declared.
    *
@@ -263,6 +310,14 @@ export interface KgDimensionOptions {
    * read.
    */
   readonly loadOntology?: (stackId: string, databaseUrl?: string) => Promise<unknown>;
+  /**
+   * Reads the chunk hashes already extracted for one source, called once per `prepare`.
+   *
+   * Injected for the same reason as {@link loadOntology}: the compiler supplies the Postgres
+   * reader, a test supplies a stub. Omitted means the PRODUCTION reader -- never "nothing was
+   * ever extracted", a default that would ship a mechanism no run can observe.
+   */
+  readonly readExtractedChunkHashes?: ExtractedChunkHashesReader;
   /**
    * Describes the embedding backend the wiki dimension resolved, called once per
    * `prepare`.
@@ -386,6 +441,22 @@ function mangledNote(mangledChunks: number): string {
  */
 function schemaViolationNote(schemaViolations: number): string {
   return schemaViolations === 0 ? "" : `, ${schemaViolations} types outside the declared schema`;
+}
+
+/**
+ * Renders the reused-versus-extracted split, or nothing when every chunk was extracted.
+ *
+ * The only fragment conditional on a skip, so a first ingest renders exactly the summary it
+ * always did. Both counts are named, because "reused" alone would leave a reader guessing
+ * whether the rest was extracted or lost.
+ *
+ * @param reusedChunks - Chunks skipped because their hash was already extracted.
+ * @param extractedChunks - Chunks this run sent to the model.
+ * @returns A leading-comma fragment, or an empty string when nothing was reused.
+ */
+function reuseNote(reusedChunks: number, extractedChunks: number): string {
+  if (reusedChunks === 0) return "";
+  return `, ${pluralize(reusedChunks, "chunk")} reused, ${pluralize(extractedChunks, "chunk")} extracted`;
 }
 
 /** Which head a summary renders: the detect-only run, or the persisted one. */
@@ -520,6 +591,11 @@ function detectOnlyHandle(
     failedChunks: 0,
     mangledChunks: 0,
     schemaViolations: 0,
+    // A detect-only run sends nothing, so it reuses nothing: the ledger is not even read,
+    // which is what keeps a dry run free of the database as well as of the provider.
+    reusedChunks: 0,
+    extractedChunks: 0,
+    extractedHashes: [],
     dryRunReport,
   };
 }
@@ -540,9 +616,12 @@ function detectOnlyHandle(
  * The order is load-bearing and is the order of the calls below:
  * {@link rejectionNote} comes FIRST — its exact wording and its position are
  * pinned by callers and predate the other three — then the failed-chunk, mangled
- * envelope and schema-violation notes. Each note carries its own leading comma
- * and renders nothing when its count is zero, so the head is followed directly by
- * an empty string on a clean run and the summary is the counts alone.
+ * envelope and schema-violation notes, then the reuse split. Each note carries its own
+ * leading comma and renders nothing when its count is zero, so the head is followed
+ * directly by an empty string on a clean run and the summary is the counts alone.
+ *
+ * The reuse note comes LAST because it is appended to a summary that already exists: a
+ * run that reused nothing renders the exact string it always did.
  *
  * @param kind - Which head to render: the detect-only run or the persisted one.
  * @param handle - Prepared chunks and extraction, for the counts and the notes.
@@ -556,7 +635,7 @@ function summaryFor(kind: SummaryKind, handle: KgHandle): string {
   const counts = `${chunkCount} chunks, ${handle.entities.length} entities`;
   const head =
     kind === "dry-run" ? `kg:dry-run(${counts}${dryRunNote(handle.dryRunReport)})` : `kg:${counts}`;
-  return `${head}${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}`;
+  return `${head}${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}${reuseNote(handle.reusedChunks, handle.extractedChunks)}`;
 }
 
 /**
@@ -587,18 +666,9 @@ async function writeGraph(
     await writeGraphRows(callerTx, options, handle);
     return;
   }
-  const client = createClient(
-    options.databaseUrl ?? kgConfig.DATABASE_URL,
-    DB_CONNECT_TIMEOUT_SECONDS,
+  await withGraphTransaction(options.databaseUrl ?? kgConfig.DATABASE_URL, (tx) =>
+    writeGraphRows(tx, options, handle),
   );
-  try {
-    const db = createDatabase(client);
-    await db.transaction(async (tx) => {
-      await writeGraphRows(tx, options, handle);
-    });
-  } finally {
-    await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
-  }
 }
 
 /**
@@ -636,6 +706,15 @@ async function writeGraphRows(
     handle.relationships,
     nameToId,
   );
+  // LAST, and in the SAME transaction: the graph write and the record of what was
+  // extracted for this source cannot disagree, and a rolled-back commit leaves no hash
+  // claiming an extraction that never landed.
+  await recordExtractedChunkHashes(
+    tx,
+    options.stackId,
+    handle.registration.source,
+    handle.extractedHashes,
+  );
 }
 
 /**
@@ -664,20 +743,11 @@ async function writeGraphRows(
  * @param source - Source identity recorded at ingest time.
  */
 async function deleteGraphRows(options: KgDimensionOptions, source: string): Promise<void> {
-  const client = createClient(
-    options.databaseUrl ?? kgConfig.DATABASE_URL,
-    DB_CONNECT_TIMEOUT_SECONDS,
+  // No row is not an error: forgetting an unknown or already-forgotten source is the desired
+  // end state, and a reconciler retry must not fail on it.
+  await withGraphTransaction(options.databaseUrl ?? kgConfig.DATABASE_URL, (tx) =>
+    forgetDocumentRows(tx, options.stackId, source),
   );
-  try {
-    const db = createDatabase(client);
-    await db.transaction(async (tx) => {
-      // No row is not an error: forgetting an unknown or already-forgotten source
-      // is the desired end state, and a reconciler retry must not fail on it.
-      await forgetDocumentRows(tx, options.stackId, source);
-    });
-  } finally {
-    await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
-  }
 }
 
 /**
@@ -859,6 +929,68 @@ function resolveBackendRuns(options: KgDimensionOptions): {
 }
 
 /**
+ * Open the graph database, run `work` in ONE transaction, and close it again.
+ *
+ * The one place this adapter opens the graph database, so the three callers (the graph write,
+ * the forget, and the ledger read the skip makes) cannot disagree about the timeout, the
+ * connection override, or whether a failure still closes the client.
+ *
+ * @param databaseUrl - Resolved connection string.
+ * @param work - The statements to run on the transaction's handle.
+ * @returns Whatever `work` returned, once the transaction committed.
+ */
+async function withGraphTransaction<T>(
+  databaseUrl: string,
+  work: (tx: GraphTransaction) => Promise<T>,
+): Promise<T> {
+  const client = createClient(databaseUrl, DB_CONNECT_TIMEOUT_SECONDS);
+  try {
+    return await createDatabase(client).transaction(work);
+  } finally {
+    await client.end({ timeout: DB_CONNECT_TIMEOUT_SECONDS });
+  }
+}
+
+/** The transaction handle the vendored database type hands a callback. */
+type GraphTransaction = Parameters<typeof forgetDocumentRows>[0];
+
+/**
+ * The default reuse reader: the ledger, over a connection this adapter opens and closes.
+ *
+ * The connection is here rather than in `./chunk-reuse.ts` because opening the graph database
+ * is a `@repo/kg` import and the lint ratchet allows no NEW file to hold one; the statements
+ * themselves live there.
+ */
+const REUSE_READER_FROM_LEDGER: ExtractedChunkHashesReader = createLedgerReader(
+  async (databaseUrl, work) =>
+    await withGraphTransaction(databaseUrl ?? kgConfig.DATABASE_URL, work),
+);
+
+/**
+ * The extraction this run must pay for: only the chunks whose hash is absent from the ledger.
+ *
+ * The ontology is spread rather than passed as `undefined`, so a run without one calls
+ * extraction with exactly the two arguments it always did: call arity is observable to spies.
+ *
+ * @param pending - Chunks this source has not been extracted for yet.
+ * @param options - Stack binding, for the name the prompt is contextualised with.
+ * @param ontology - The declaration to enforce.
+ * @param chatBackend - The override to install around the call alone.
+ * @returns The model's answer, or the empty extraction a fully-reused run carries.
+ */
+async function extractPendingChunks(
+  pending: readonly ChunkResult[],
+  options: KgDimensionOptions,
+  ontology: Ontology,
+  chatBackend: ChatBackendDescriptor | undefined,
+): Promise<ExtractionOutcome> {
+  if (pending.length === 0) return NO_CHUNKS_EXTRACTED;
+  return await withChatBackend(chatBackend, () =>
+    extractGraphFromChunks(pending, options.stackName, ...ontologyArgs(ontology)),
+  );
+}
+
+/**
  * Build the graph dimension.
  *
  * @param options - Stack binding and an optional database override.
@@ -888,15 +1020,25 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
       const chunks = await withEmbeddingBackend(backends.embedding.backend, () =>
         chunkAndEmbed(input.body, options.stackId, chunkLabel),
       );
-      // The ontology is spread rather than passed as `undefined`, so a run without one
-      // calls extraction with exactly the two arguments it always did. Call arity is
-      // observable to spies and mocks, and "no ontology changes nothing" has to hold at
-      // the call boundary, not just in the result. Installed around this call alone,
-      // exactly like the embedding backend and independently of it: the override decides
-      // the extraction endpoint, credential and model, and is cleared again even when
-      // extraction throws.
-      const extraction = await withChatBackend(backends.chat.backend, () =>
-        extractGraphFromChunks(chunks, options.stackName, ...ontologyArgs(ontology)),
+      // THE SKIP. Chunks this source was already extracted for are not sent again, and the
+      // read happens strictly BEFORE the extraction call: a ledger read after the spend
+      // would be a report, not a saving. A reader that fails fails the run, because a
+      // silent empty set here would look exactly like "nothing was ever extracted".
+      const readReuse = options.readExtractedChunkHashes ?? REUSE_READER_FROM_LEDGER;
+      // Nothing chunked means nothing to look up, and no reason to open a database.
+      const known =
+        chunks.length === 0
+          ? NOTHING_REUSED
+          : await readReuse(options.stackId, input.source, options.databaseUrl);
+      const pendingChunks = chunks.filter((chunk) => !known.has(chunk.contentHash));
+      // Installed around this call alone, exactly as before: the override decides the
+      // extraction endpoint, credential and model, and is cleared again even when
+      // extraction throws. A fully-reused run installs nothing.
+      const extraction = await extractPendingChunks(
+        pendingChunks,
+        options,
+        ontology,
+        backends.chat.backend,
       );
       const handle: KgHandle = {
         documentId: chunkLabel,
@@ -908,6 +1050,9 @@ export function createKgDimension(options: KgDimensionOptions): Dimension {
         failedChunks: extraction.failedChunks ?? 0,
         mangledChunks: extraction.mangledChunks ?? 0,
         schemaViolations: extraction.schemaViolations ?? 0,
+        reusedChunks: chunks.length - pendingChunks.length,
+        extractedChunks: pendingChunks.length,
+        extractedHashes: pendingChunks.map((chunk) => chunk.contentHash),
       };
       return { unchanged: chunks.length === 0, handle };
     },

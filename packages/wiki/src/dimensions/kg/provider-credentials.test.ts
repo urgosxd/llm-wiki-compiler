@@ -94,6 +94,9 @@ function dimension(
     stackId: "stack-1",
     stackName: "Stack One",
     loadOntology,
+    // Injected for the same reason: the default ledger reader would reach Postgres,
+    // and this suite asserts what a run SPENDS rather than what it skips.
+    readExtractedChunkHashes: async () => new Set<string>(),
     ...(describeEmbeddingBackend === undefined ? {} : { describeEmbeddingBackend }),
     ...(describeChatBackend === undefined ? {} : { describeChatBackend }),
   });

@@ -64,6 +64,9 @@ function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {
     // declaration" keeps it free of a database without pretending the default
     // reader does not exist — the default is what a real run uses.
     loadOntology: async () => undefined,
+    // The chunk-hash reader is injected for the same reason: the default one opens
+    // the graph database, and this suite replaces the vendored core wholesale.
+    readExtractedChunkHashes: async () => new Set<string>(),
     // This suite is about sequencing, not the provider resolution it replaces,
     // so it reports no embedding backend and stays independent of the machine's
     // own provider environment.
@@ -74,6 +77,29 @@ function dimension(options: { dryRun?: boolean; databaseUrl?: string } = {}) {
 /** A dimension input with distinct source and body, as an ingest would supply. */
 const INPUT = { source: "https://example.test/a", title: "A", document: "# A\nbody", body: "body" };
 
+/**
+ * The handle the mocked `database.transaction` hands its callback.
+ *
+ * Module-level and shared so a case can assert the writes landed on THIS handle: `commit`
+ * now records the run's extracted chunk hashes on the caller's own handle as well, and that
+ * ledger write is a statement issued on it rather than a barrel function, so the handle needs
+ * the `execute` the real one carries. Asserting against the same object keeps the cases below
+ * pinned to the identity of the transaction rather than to its shape.
+ */
+const GRAPH_TX = { execute: vi.fn(async () => []) };
+
+/**
+ * A transaction handle shaped like the vendored `database.transaction` callback's.
+ *
+ * Fresh per call, so the coordinator-path case can assert on a handle of its own without
+ * inheriting call history from the cases that use {@link GRAPH_TX}.
+ *
+ * @returns A handle with the one method the graph write reaches for.
+ */
+function fakeGraphTx(): { execute: ReturnType<typeof vi.fn> } {
+  return { execute: vi.fn(async () => []) };
+}
+
 beforeEach(() => {
   // The model the operator named: `prepare` refuses a model nobody chose, and
   // this suite measures the adapter, not that door.
@@ -82,7 +108,9 @@ beforeEach(() => {
   chunkAndEmbed.mockResolvedValue([CHUNK]);
   extractGraphFromChunks.mockResolvedValue({ entities: [ENTITY], relationships: [RELATIONSHIP] });
   createClient.mockReturnValue({ end: vi.fn().mockResolvedValue(undefined) });
-  createDatabase.mockReturnValue({ transaction: (fn: (tx: unknown) => Promise<void>) => fn({}) });
+  createDatabase.mockReturnValue({
+    transaction: (fn: (tx: unknown) => Promise<void>) => fn(GRAPH_TX),
+  });
   consolidateEntityRows.mockResolvedValue(new Map([["Alpha", "id-alpha"]]));
   consolidateRelationshipRows.mockResolvedValue(undefined);
   // Postgres owns the document id; the adapter must adopt it, never invent it.
@@ -114,11 +142,11 @@ describe("the kg dimension adapter", () => {
     // The foreign key `entity_source_documents.document_id` references this row, so
     // consolidation must receive the REAL id, not a digest that merely looks like a UUID.
     expect(registerDocumentRow).toHaveBeenCalledWith(
-      {},
+      GRAPH_TX,
       { stackId: "stack-1", source: INPUT.source, body: INPUT.body, title: INPUT.title },
     );
     expect(consolidateEntityRows).toHaveBeenCalledWith(
-      {}, "stack-1", "row-id-from-postgres", [ENTITY],
+      GRAPH_TX, "stack-1", "row-id-from-postgres", [ENTITY],
     );
   });
 
@@ -155,8 +183,8 @@ describe("the kg dimension adapter", () => {
     expect(registerDocumentRow.mock.invocationCallOrder[0]).toBeLessThan(
       consolidateEntityRows.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(consolidateEntityRows).toHaveBeenCalledWith({}, "stack-1", expect.any(String), [ENTITY]);
-    expect(consolidateRelationshipRows).toHaveBeenCalledWith({}, "stack-1", [RELATIONSHIP], expect.any(Map));
+    expect(consolidateEntityRows).toHaveBeenCalledWith(GRAPH_TX, "stack-1", expect.any(String), [ENTITY]);
+    expect(consolidateRelationshipRows).toHaveBeenCalledWith(GRAPH_TX, "stack-1", [RELATIONSHIP], expect.any(Map));
     expect(committed.summary).toBe("kg:1 chunks, 1 entities");
     expect(committed.idempotencyKey).toBe("kg:row-id-from-postgres");
   });
@@ -213,7 +241,7 @@ describe("the kg dimension adapter", () => {
    */
   it("joins the coordinator's transaction instead of opening its own connection", async () => {
     const prepared = await dimension().prepare(INPUT);
-    const coordinatorTx = { name: "coordinator-tx" };
+    const coordinatorTx = { name: "coordinator-tx", ...fakeGraphTx() };
 
     await dimension().commit(prepared, { tx: coordinatorTx });
 

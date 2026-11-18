@@ -117,6 +117,9 @@ function build(loadOntology: () => Promise<unknown>) {
     stackId: "s",
     stackName: "demo",
     loadOntology,
+    // Injected for the same reason as `loadOntology`: the default ledger reader opens
+    // the graph database, and this suite never calls `commit`, so nothing here needs one.
+    readExtractedChunkHashes: async () => new Set<string>(),
     // This suite replaces the provider layer, so it reports no embedding
     // backend: the default resolver would consult the machine's own provider
     // environment, which has nothing to do with what is under test here.
@@ -203,6 +206,7 @@ describe("kg dimension ontology wiring", () => {
       stackName: "demo",
       ontology: explicit,
       loadOntology,
+      readExtractedChunkHashes: async () => new Set<string>(),
       describeEmbeddingBackend: () => undefined,
     }).prepare(INPUT);
 
@@ -226,7 +230,13 @@ describe("kg dimension default ontology source", () => {
 
     // Real path on purpose: this asserts what extraction RECEIVES, and a detect-only
     // run no longer extracts. The core is stubbed, so the assertion still costs nothing.
-    await createKgDimension({ stackId: "s", stackName: "demo" }).prepare(INPUT);
+    // The ledger reader is stubbed, but only the READ is: the default ontology source
+    // below is still the one nobody wired, which is what this case proves.
+    await createKgDimension({
+      stackId: "s",
+      stackName: "demo",
+      readExtractedChunkHashes: async () => new Set<string>(),
+    }).prepare(INPUT);
 
     expect(loadStoredOntology).toHaveBeenCalledWith("s", undefined);
     expect(extractGraphFromChunks).toHaveBeenCalledWith(
