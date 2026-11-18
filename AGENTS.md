@@ -227,7 +227,16 @@ Before committing any work, and before considering any task complete, you must:
 6. `pnpm run lint` — the house-rule ratchet: 400-line files, 40-line functions, no
    `any`, and the `src/` <-> `packages/llmwiki-kg` import boundary. It passes on a
    frozen baseline and fails only on newly introduced violations. `pnpm run lint:update`
-   rebaselines; using it to absorb a new violation defeats the gate.
+   is reduction-only: it rewrites the baseline only for a first freeze or when the
+   configuration digest has moved (`scripts/lint-ratchet.ts:363-366`), so when a
+   legitimate new allowance is needed it refuses instead of rebaselining and writes
+   nothing — exit `1`, and `eslint-baseline.json` is unchanged. **A legitimate new
+   allowance therefore cannot be recorded by the documented path.** Named follow-up:
+   the ratchet offers no sanctioned way to record a reviewed, legitimate new
+   allowance, so the choices are to avoid the reach entirely or to hand-edit
+   `eslint-baseline.json`; closing that gap is follow-up work, not part of this
+   change. Using the command to absorb an unreviewed violation still defeats the
+   gate.
 
    The boundary half of that gate is two rules reading one set of patterns.
    `no-restricted-imports` reports static `import`/`export` declarations; the local
