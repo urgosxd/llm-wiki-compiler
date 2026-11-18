@@ -72,7 +72,55 @@ porque lo ejecuta el daemon.
 
 ## Evidence
 
-Manifest list publicado:
+### Publicación vigente — 2026-11-17, sobre HEAD `ed226a2e`
+
+Repetida a pedido del humano sobre el árbol limpio de `main` (`ed226a2e`, "test(package-selection):
+freeze the foundation artifact test as an orphan"), con la emulación `qemu-aarch64` ya registrada en
+`/proc/sys/fs/binfmt_misc/`. Comando, tal cual, con el builder `multibuilder` (driver
+`docker-container`, soporta `linux/arm64`):
+
+```
+docker buildx build --builder multibuilder \
+  --platform linux/amd64,linux/arm64 \
+  --tag docker.io/urgosxd7/llmwiki:latest --push .
+```
+
+Resultado: exit `0` en **4 m 29 s**, con `pushing layers 17.3s` y `pushing manifest 4.4s`.
+Manifest list publicado, leído de vuelta del registry (`registry-1.docker.io`) y coincidente con
+`docker manifest inspect`:
+
+```
+docker.io/urgosxd7/llmwiki:latest
+MediaType: application/vnd.oci.image.index.v1+json
+Digest:    sha256:0c9d4905559013e4358c79cf75d8eca9fd0a80653226ccf6b03eacfbaf3dcef7
+  linux/amd64   sha256:4175b98f3347b13df4fe44865aaec4a156673f9dc2d64970d54df06a2fa878e2
+  linux/arm64   sha256:b96f6603ea135d6d8f0b301cc33bcd60fe9290b7c63e6a89d08165615b51e3ab
+  unknown/unknown  sha256:794fd415b3e49c8aa22a3c375022368a58ce42865b91f02e385aad75557b226a  (attestation amd64)
+  unknown/unknown  sha256:af495b6f79fb094dccc764498ac0dd8936c231998238d72193265b5e262cb55c  (attestation arm64)
+```
+
+Smoke test contra el tag publicado (las dos plataformas resueltas desde el mismo `latest`):
+
+| chequeo | linux/amd64 | linux/arm64 |
+| --- | --- | --- |
+| `process.arch` | `x64` | `arm64` |
+| `require('/app/package.json').version` | `1.4.0-dev.20260919` | `1.4.0-dev.20260919` |
+| binario nativo `skia` | `skia.linux-x64-gnu.node` | `skia.linux-arm64-gnu.node` |
+| MCP `initialize` sobre stdio | `serverInfo: llmwiki/1.4.0-dev.20260919` | `serverInfo: llmwiki/1.4.0-dev.20260919` |
+
+Dos observaciones de esta corrida, anotadas para que nadie las lea como fallas:
+
+- `node /app/dist/api.js --version` responde `unknown option: --version`. No es una regresión: ese
+  flag no existe en el launcher `api.js` (sus comandos son `host` y `serve`), así que la versión se
+  verifica contra `/app/package.json`, que es lo que la tabla de arriba registra.
+- El install de `cpu-features`/`ssh2` deja sus bindings nativos opcionales sin compilar
+  (`Error: Unable to detect compiler type`, `Could not find any Python installation to use`). Son
+  `optionalDependencies` con fallback en JS y no rompen el build: `pnpm install` termina `0` y la
+  imagen arranca en ambas arquitecturas.
+
+### Publicación anterior — superada por la de arriba
+
+Manifest list publicado entonces:
 
 ```
 docker.io/urgosxd7/llmwiki:latest
