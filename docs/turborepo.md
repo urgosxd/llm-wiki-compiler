@@ -166,7 +166,7 @@ does not "optimise" the invocation back into a list:
 | --- | --- | --- | --- | --- |
 | `turbo run build` | `//`, `@repo/api`, `@repo/foundation`, `@repo/kg`, `@repo/wiki` | 2 (`//#build`, `@repo/kg#build`), exit `0` | 11.9 s | **chosen** — extensional |
 | `turbo run build --filter=// --filter=@repo/kg` | `//`, `@repo/kg` | 2 (`//#build`, `@repo/kg#build`), exit `0` | 11.8 s | **rejected** — it ENUMERATES the artefact set, so the next package to declare a `build` script silently stops being built in CI: an item-6 defect introduced by the fix for an item-6 defect |
-| `turbo run build --filter=//` | `//` | 1 (`//#build` = `tsup`), exit `0` | 8.0 s | **rejected** — drops `@repo/kg#build`, so the artefact the KG image ships (`packages/llmwiki-kg/Dockerfile:113`) stops being built |
+| `turbo run build --filter=//` | `//` | 1 (`//#build` = `tsup`), exit `0` | 8.0 s | **rejected** — drops `@repo/kg#build`, so the artefact the KG reference recipe consumes (`packages/llmwiki-kg/Dockerfile:113`) stops being built |
 
 A third task in an unfiltered run costs a second of serialisation at `concurrency: "1"`;
 a filter list costs a build that stops happening and nobody notices. That asymmetry is the
@@ -988,8 +988,10 @@ would become possible once the graph could express it.
 ## Named gap 6: two images, no shared base stage, and the same rationale written twice
 
 **This is a gap, not a footnote, and nothing has gone wrong yet — which is exactly why it is
-worth recording before it does.** The repository ships exactly two container images and they
-share no stage, no fragment and no generated base:
+worth recording before it does.** The repository carries exactly two container images — the
+root `Dockerfile` is the only one that is published, and `packages/llmwiki-kg/Dockerfile` is a
+reference build that ships nowhere (see `docs/kg-mcp.md`) — and they share no stage, no
+fragment and no generated base:
 
 ```
 $ wc -l Dockerfile packages/llmwiki-kg/Dockerfile
@@ -1289,10 +1291,11 @@ either of their `prod-deps` trees, and it does not exercise `pnpm install --froz
 an image's own context, which is exactly the check gap 7 needs. Compiling one input is not
 building an image.
 
-**The real question, stated plainly:** this repository ships two container images that **no
-workflow proves exist**. No CI step would fail if either `Dockerfile` stopped parsing, if a
+**The real question, stated plainly:** this repository carries two container images and, at the
+time of this measurement, **no workflow proved either of them existed**. No CI step would then
+have failed if either `Dockerfile` stopped parsing, if a
 stage stopped resolving, or if a manifest COPY set drifted (gap 7) — the first feedback would
-come from whoever next runs `docker build` by hand. That is the finding, and it is recorded as a
+have come from whoever next runs `docker build` by hand. That is the finding, and it is recorded as a
 measurement rather than a defect with a scheduled fix.
 
 **Building the images in CI is a separate decision, being taken with the user, and it is NOT

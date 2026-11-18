@@ -17,6 +17,12 @@ services:
       retries: 5
 
   api:
+    # NOT A DELIVERABLE. This service builds the REFERENCE RECIPE
+    # (`packages/llmwiki-kg/Dockerfile`): it ships nowhere, no workflow pushes it and no
+    # tag names it. The one published image is the root `Dockerfile`, and it serves both
+    # MCP tool sets by itself -- `docker run <image>` for stdio, `LLMWIKI_MODE=host` for
+    # HTTP on 4173. Kept here so the reference build keeps a usable local composition.
+    #
     # The KG image installs from the repository-root `pnpm-lock.yaml` and
     # `pnpm-workspace.yaml`, so its build context must be the repo root; no COPY
     # can reach above the context. Paths are relative to this compose file.

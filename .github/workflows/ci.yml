@@ -123,8 +123,9 @@ jobs:
       - name: Build the distribution and the @repo/kg artefact through the task graph
         run: pnpm exec turbo run build
       # `turbo run build` above runs `@repo/kg#build`, which is `tsc -p
-      # tsconfig.build.json` writing the same `packages/llmwiki-kg/ts/dist` the KG image
-      # consumes (`packages/llmwiki-kg/Dockerfile:113` COPY, `:123` CMD). The explicit
+      # tsconfig.build.json` writing the same `packages/llmwiki-kg/ts/dist` the KG
+      # REFERENCE RECIPE consumes (`packages/llmwiki-kg/Dockerfile:113` COPY, `:140` CMD).
+      # That recipe is not a deliverable — see the note two blocks below. The explicit
       # `pnpm --filter @repo/kg run build` step that used to sit here was therefore a
       # duplicate of a task on the line above, and it was removed: a broken
       # `tsconfig.build.json` still fails a step named for building, because the task
@@ -135,13 +136,18 @@ jobs:
       # `@repo/wiki#build` resolve with no command and are dropped from the run by
       # turbo. Those three members emit nothing by design; `turbo run build` executes
       # exactly two tasks, and says so: `Tasks: 2 successful, 2 total`.
-      # BOTH images this repository ships are built here and exercised by running
-      # them — the root one in `host` mode (the viewer's origin gate, which accepts
-      # only the Host the container bound) and in `serve` mode (one stdio MCP
-      # handshake), the KG one on its own `/health`. Neither is pushed anywhere:
-      # publishing an image is the owner's decision, not CI's. Assembling is not the
-      # claim, so the script runs the containers; a Dockerfile that builds into an
-      # image that dies on its first import used to be invisible to every gate here.
+      # This repository publishes exactly ONE image: the root `Dockerfile`. It is built
+      # here and exercised by running it in both of its modes — `host` mode (the viewer's
+      # origin gate, which accepts only the Host the container bound) and `serve` mode
+      # (one stdio MCP session that must answer `initialize` AND advertise all 17 union
+      # tool names). The second Dockerfile, `packages/llmwiki-kg/Dockerfile`, is a
+      # REFERENCE RECIPE that ships nowhere: no workflow builds or pushes it for
+      # delivery, no tag names it, and it is not a deliverable. It stays in this step's
+      # matrix only so it cannot rot silently — a tree that keeps a buildable recipe has
+      # to keep it buildable. NOTHING here is pushed anywhere: publishing an image is the
+      # owner's decision, not CI's. Assembling is not the claim, so the script runs the
+      # containers; a Dockerfile that builds into an image that dies on its first import
+      # used to be invisible to every gate here.
       #
       # A STEP, not a new job: it shares `build-and-test`'s check identity --
       # with no authored job-level `name:`, GitHub renders the job id plus the
@@ -166,7 +172,7 @@ jobs:
       # The script sits in `.github/scripts/` because `.dockerignore` excludes
       # `.github` from every build context: the runtime image's `/app/scripts` stays
       # byte-identical, so this step cannot change the delivered artefact.
-      - name: Build and smoke-test both container images
+      - name: Build and smoke-test the published image and the KG reference recipe
         run: bash .github/scripts/docker-images-check.sh
       # The KG package carries its own tsconfig, and nothing else here reads it:
       # root `tsc` includes only `src/**`, and `codebase-health` ignores
