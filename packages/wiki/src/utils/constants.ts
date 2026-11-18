@@ -277,6 +277,25 @@ export const OPENAI_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
  */
 export const OLLAMA_DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * Env var that overrides how long a shutdown waits for unflushed job mirror writes.
+ *
+ * A pending `wiki.ingest_job` mirror write is what a restart turns into a row that says
+ * `running` forever, so shutdown awaits the write -- but not forever: a database that is
+ * already gone must not hold the process open. Five seconds is long enough for a healthy
+ * round trip and short enough that an orchestrator's stop timeout is not reached.
+ */
+export const INGEST_JOB_MIRROR_FLUSH_TIMEOUT_ENV_VAR = "LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS";
+
+/**
+ * Default bound for the shutdown flush of in-flight mirror writes (5 seconds).
+ *
+ * Named rather than inlined at the call site, and overridable through
+ * {@link INGEST_JOB_MIRROR_FLUSH_TIMEOUT_ENV_VAR}: the host that owns the bound and the
+ * operator who has to tune it must be able to name the same number.
+ */
+export const INGEST_JOB_MIRROR_FLUSH_TIMEOUT_MS_DEFAULT = 5_000;
+
 /** Output paths relative to the project root for export artifacts. */
 export const EXPORT_DIR = "dist/exports";
 

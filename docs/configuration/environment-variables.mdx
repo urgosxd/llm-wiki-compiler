@@ -237,10 +237,13 @@ pages and `state.json` intact.
 |---|---|---|
 | `LLMWIKI_REQUEST_TIMEOUT_MS` | Provider built-in default (10 min for `openai`, 30 min for `ollama`) | Per-request timeout override in milliseconds. Applies to both the `openai` and `ollama` backends. When unset, each provider falls back to its own built-in default |
 | `OLLAMA_TIMEOUT_MS` | 30-minute `ollama` built-in default | Ollama-specific timeout override in milliseconds. Wins over `LLMWIKI_REQUEST_TIMEOUT_MS` when both are set |
+| `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS` | 5 seconds (`INGEST_JOB_MIRROR_FLUSH_TIMEOUT_MS_DEFAULT`) | How long a host shutdown waits for in-flight `wiki.ingest_job` mirror writes before it stops waiting. Waiting is what keeps a restart from leaving a row that says `running` forever; the bound is what keeps a database that is already gone from holding the process open. A flush that runs out of bound logs the job ids it left unwritten |
 
 Timeout resolution for Ollama: explicit constructor option → `OLLAMA_TIMEOUT_MS` → `LLMWIKI_REQUEST_TIMEOUT_MS` → built-in 30-minute default.
 
 Non-numeric, zero, or negative values are silently ignored and the next source in the chain is used.
+
+`LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS` follows the same rule: unset, empty, non-numeric, zero or negative falls back to the 5-second default, so the shutdown bound is never accidentally "wait forever" (a zero would mean that) or negative.
 
 ---
 

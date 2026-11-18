@@ -29,6 +29,20 @@
  * best-effort and swallows its error into a reported callback: the live view stays
  * authoritative for the owning process, and durability is what a later reader gets
  * when it worked.
+ *
+ * ## A stale snapshot never overwrites a newer one
+ *
+ * A process patches one job many times while it runs, and two of those writes can be in
+ * flight at once. Postgres resolves them in commit order, not in patch order, so an
+ * OLDER snapshot that arrives last used to win — the measured row that kept reporting
+ * `running`/`queued` after the in-memory job had settled, with a frozen `updated_at`.
+ * The upsert therefore applies only when the incoming snapshot is not older than the
+ * stored row.
+ *
+ * Equal timestamps APPLY. Two patches stamped in the same millisecond are not two
+ * versions of one state to choose between, and rejecting the equal one would hand the
+ * row to whichever write arrived first — which is the older patch, the exact wrong
+ * answer. Strictly older is the only case this refusal is for.
  */
 
 import { sql } from "drizzle-orm";
@@ -90,6 +104,9 @@ export async function saveIngestJob(
         compile_status = excluded.compile_status,
         payload = excluded.payload,
         updated_at = excluded.updated_at
+      -- ingest_job is the stored row, excluded the snapshot being written. Only a
+      -- write that moves the row FORWARD may land; see this file's header.
+      where ingest_job.updated_at <= excluded.updated_at
     `);
   });
 }

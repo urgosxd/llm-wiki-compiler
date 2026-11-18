@@ -73,7 +73,7 @@ import { handleApiRequest, type ApiDeps, type IngestDimensionsPort } from "./api
 import { createDimensionsPort } from "../dimensions/port.js";
 import { handleMcpHttp, isMcpHttpPath } from "./mcp-http.js";
 import { createJobRegistry, type JobRegistry } from "@repo/wiki/job-registry";
-import { createDurableJobRegistry } from "@repo/wiki/job-durable-registry";
+import { createDurableJobRegistry, createIngestJobMirrorQueue, resolveMirrorFlushTimeoutMs, type IngestJobMirrorQueue } from "@repo/wiki/job-durable-registry";
 import { listIngestJobs, readIngestJob } from "@repo/wiki/job-store";
 import { stackExists } from "@repo/wiki/stack-store";
 import type { DurableJobReads } from "@repo/wiki/viewer-api-ingest-jobs";
@@ -180,6 +180,15 @@ export interface HostOptions {
    * read each other's ingest history.
    */
   readonly ingestJobs?: JobRegistry;
+  /**
+   * Mirror write queue this host's `close` flushes.
+   *
+   * Defaults to a fresh queue, which is what the registry built for this host uses. Injectable
+   * so a test can drive the shutdown bound through the queue's timer seam instead of waiting on
+   * a real clock — the property being proved is "close awaits the writes", not "the machine was
+   * fast enough".
+   */
+  readonly jobMirrorQueue?: IngestJobMirrorQueue;
 }
 
 /** What the durable reads need a bound Stack for, named in a refusal. */
@@ -276,14 +285,20 @@ export function durableJobReadsFor(env: NodeJS.ProcessEnv = process.env): Durabl
  *
  * @param env - Environment this host was started with.
  * @param stackId - The Stack the process named, used for a job that names none.
+ * @param queue - Write queue the host's close flushes; a private one when omitted.
  * @returns The mirrored registry.
  */
-function stackBoundRegistry(env: NodeJS.ProcessEnv, stackId: string): JobRegistry {
+function stackBoundRegistry(
+  env: NodeJS.ProcessEnv,
+  stackId: string,
+  queue: IngestJobMirrorQueue | undefined,
+): JobRegistry {
   const dimensionsDb = createDimensionsDatabase(env);
   return createDurableJobRegistry(createJobRegistry(), {
     db: dimensionsDb.db,
     stackId,
     onError: reportMirrorFailure,
+    queue,
   });
 }
 
@@ -302,6 +317,7 @@ function stackBoundRegistry(env: NodeJS.ProcessEnv, stackId: string): JobRegistr
  * @param source - Source identity of the job being created.
  * @param now - Creation timestamp.
  * @param stackId - The Stack the request named, when it named one.
+ * @param queue - Write queue every wrapper shares, so one close flushes them all.
  * @returns The created job.
  * @throws {StackAuthorityError} when the job names no Stack.
  */
@@ -312,11 +328,12 @@ function createNamedJob(
   source: string,
   now: Date,
   stackId: string | undefined,
+  queue: IngestJobMirrorQueue | undefined,
 ): ReturnType<JobRegistry["create"]> {
   if (stackId === undefined || stackId.trim() === "") {
     throw new StackAuthorityError(unnamedJobStackRefusal(DURABLE_REGISTRY_CONTEXT));
   }
-  const owner = createDurableJobRegistry(live, { db, stackId, onError: reportMirrorFailure });
+  const owner = createDurableJobRegistry(live, { db, stackId, onError: reportMirrorFailure, queue });
   const job = owner.create(source, now, stackId);
   for (const id of [...owners.keys()]) if (live.get(id) === undefined) owners.delete(id);
   owners.set(job.id, owner);
@@ -334,9 +351,10 @@ function createNamedJob(
  * comes with each job. Keying the host's own READS by Stack is what T6 defers.
  *
  * @param env - Environment this host was started with.
+ * @param queue - Write queue every per-job wrapper shares, and the one close flushes.
  * @returns The per-job registry.
  */
-function unboundStackRegistry(env: NodeJS.ProcessEnv): JobRegistry {
+function unboundStackRegistry(env: NodeJS.ProcessEnv, queue: IngestJobMirrorQueue | undefined): JobRegistry {
   const dimensionsDb = createDimensionsDatabase(env);
   const live = createJobRegistry();
   const owners = new Map<string, JobRegistry>();
@@ -344,7 +362,7 @@ function unboundStackRegistry(env: NodeJS.ProcessEnv): JobRegistry {
   const ownerOf = (id: string): JobRegistry => owners.get(id) ?? live;
   return {
     create: (source, now, stackId) =>
-      createNamedJob(live, owners, dimensionsDb.db, source, now, stackId),
+      createNamedJob(live, owners, dimensionsDb.db, source, now, stackId, queue),
     get: (id) => live.get(id),
     list: () => live.list(),
     patchIngest: (id, patch, now) => ownerOf(id).patchIngest(id, patch, now),
@@ -370,12 +388,16 @@ function unboundStackRegistry(env: NodeJS.ProcessEnv): JobRegistry {
  * the `POST /stacks` that would fix it.
  *
  * @param env - Environment this host was started with; defaults to `process.env`.
+ * @param queue - Write queue every wrapper uses, so one close flushes every Stack's writes.
  * @returns The registry the host should use.
  */
-export function durableRegistryFor(env: NodeJS.ProcessEnv = process.env): JobRegistry {
+export function durableRegistryFor(
+  env: NodeJS.ProcessEnv = process.env,
+  queue?: IngestJobMirrorQueue,
+): JobRegistry {
   if (!isDatabaseConfigured(env)) return createJobRegistry();
   const bound = boundJobStackId(env);
-  return bound === undefined ? unboundStackRegistry(env) : stackBoundRegistry(env, bound);
+  return bound === undefined ? unboundStackRegistry(env, queue) : stackBoundRegistry(env, bound, queue);
 }
 
 /** A running host: both sub-apps behind one listener with one close path. */
@@ -588,7 +610,12 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // no Stack bound now SERVES from a per-job registry that refuses the jobs it cannot
   // attribute, because refusing to build it is what stopped such a host from binding
   // and therefore from ever receiving the `POST /stacks` that creates the first Stack.
-  const ingestJobs = options.ingestJobs ?? durableRegistryFor(process.env);
+  // One write queue for every wrapper this host builds, and the thing `close` flushes. A queue
+  // per wrapper would leave the shutdown walking wrappers that may already have been evicted
+  // from the live registry — and the terminal write it is looking for is exactly the one that
+  // would be missed.
+  const jobMirrorQueue = options.jobMirrorQueue ?? createIngestJobMirrorQueue();
+  const ingestJobs = options.ingestJobs ?? durableRegistryFor(process.env, jobMirrorQueue);
   // The read routes are mounted ONLY when this host serves a project to mutate:
   // a viewer without a project root has no jobs, and answering an empty list would
   // claim it looked. Omitting the registry makes the read answer 503 instead.
@@ -659,13 +686,39 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
   // `listen`, and a stale `0` would reject every legitimate request.
   apiDeps.viewerConfig = boundConfig;
 
+  /**
+   * Close the listener and flush the job mirror, once.
+   *
+   * Memoised because `close()` is the ONE close path: the signal handler registers it
+   * (`main.ts` → `registerShutdown(handle.close)`) and tests call it directly, and a second
+   * `server.close()` throws on an already-closed listener. One close, one flush, one drain.
+   *
+   * The listener stops accepting first and the flush runs after, bounded by
+   * `LLMWIKI_INGEST_JOB_FLUSH_TIMEOUT_MS`: a database that is already gone must not hold the
+   * process open, and the job ids it left unwritten are reported rather than forgotten.
+   */
+  const closeOnce = async (): Promise<void> => {
+    // Resolved with the error rather than rejected: this promise may not be awaited until
+    // the bounded flush returns, and a rejection nobody has attached a handler to is an
+    // unhandled rejection for a purely cosmetic reason.
+    const drained = new Promise<Error | undefined>((resolve) => {
+      server.close((error) => resolve(error));
+    });
+    const unwritten = await jobMirrorQueue.flush(resolveMirrorFlushTimeoutMs(process.env));
+    if (unwritten.length > 0) {
+      reportMirrorFailure(
+        new Error(`shutdown left ${unwritten.length} mirror write(s) unwritten: ${unwritten.join(", ")}`),
+      );
+    }
+    const drainError = await drained;
+    if (drainError !== undefined) throw drainError;
+  };
+  let closing: Promise<void> | undefined;
+
   return {
     host,
     port: address.port,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error === undefined ? resolve() : reject(error)));
-      }),
+    close: () => (closing ??= closeOnce()),
   };
 }
 

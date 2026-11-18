@@ -63,8 +63,14 @@ const SETTLED_INGEST = new Set(["succeeded", "unchanged", "failed"]);
  * A job is settled only when BOTH dimensions are terminal-or-absent: an ingest
  * that succeeded while its compile is still `running` is not finished, and
  * evicting it would delete the status of work that is still happening.
+ *
+ * Exported so a suite can ask THIS predicate whether a state is terminal instead of
+ * keeping a second copy of the status lists, which is the copy that would drift.
+ *
+ * @param job - The snapshot to classify.
+ * @returns True when neither dimension can move again.
  */
-function isSettled(job: IngestJob): boolean {
+export function isSettled(job: IngestJob): boolean {
   if (!SETTLED_INGEST.has(job.ingest.status)) return false;
   return job.compile.status === "skipped"
     || job.compile.status === "succeeded"
