@@ -61,6 +61,16 @@
  * an outcome here would be mutating state through a telemetry seam.
  */
 
+/**
+ * The per-dimension report, as the job record carries it.
+ *
+ * Imported from `dimensions/outcome.js` and NOT from `dimensions/report.js`: the job record
+ * is a wire type imported by the viewer and the MCP tools, and `report.js` needs
+ * `KNOWN_DIMENSIONS`, which reaches `@repo/kg` through `activation.js`. A type may not drag
+ * a database driver into a read-only renderer.
+ */
+import type { DimensionOutcome } from "../../../dimensions/outcome.js";
+
 /** Terminal and non-terminal state of the ingest half of a job. */
 export type IngestStatus =
   | "queued"
@@ -234,6 +244,25 @@ export interface IngestJob {
   readonly updatedAt: string;
   readonly ingest: IngestDimensionState;
   readonly compile: CompileDimensionState;
+  /**
+   * What EACH dimension did on this run: ran and succeeded, was skipped and why, or failed.
+   *
+   * The report the operator's complaint was missing. `ingest` and `compile` are the ingest
+   * and compile HALVES, not the `wiki` and `kg` DIMENSIONS -- `compile: succeeded` says a
+   * compile ran, never that the graph was part of it -- so the per-dimension answer needs
+   * its own field rather than being inferred from the halves.
+   *
+   * One entry per known dimension on every settling path, in canonical order: a missing
+   * entry is indistinguishable from a dimension that was not run, which is the silence this
+   * field removes. Written by the job runner from the report the ingest service builds.
+   *
+   * OPTIONAL because the store persists this record whole as `payload jsonb`
+   * (`job-store.ts`), so every row written before the field existed lacks the key and must
+   * read back as it always did. It is also absent on a run that performed no dimension work
+   * at all -- the file-authority mode -- where inventing a reason per dimension would be a
+   * claim nothing measured.
+   */
+  readonly dimensions?: readonly DimensionOutcome[];
   /**
    * Why this job is in the state it is in, as a status READ could tell.
    *

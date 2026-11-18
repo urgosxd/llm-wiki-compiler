@@ -32,8 +32,16 @@
 import { LockBusyError } from "../../../utils/lock.js";
 import { compileAndReport } from "../../../compiler/index.js";
 import type { DimensionsPort } from "@repo/foundation";
+import { IngestDimensionFailure } from "../../../dimensions/index.js";
 import type { Dimension } from "../../../dimensions/index.js";
-import { ingestSource } from "../service.js";
+import {
+  KNOWN_DIMENSIONS,
+  enabledDimensionNames,
+} from "../../../dimensions/activation.js";
+import type { DimensionOutcome, DimensionRunReport } from "../../../dimensions/outcome.js";
+import { describeDimensionMessage, describeDimensionOutcomes } from "../../../dimensions/report.js";
+import type { DimensionName } from "../../../dimensions/types.js";
+import { INGEST_DIMENSIONS, ingestSourceWithDimensions } from "../service.js";
 import { buildIngestEnv } from "../ingest-env.js";
 import { recordJobFailure } from "./failure-log.js";
 import type { JobRegistry } from "./registry.js";
@@ -190,6 +198,146 @@ function settleCompile(
 }
 
 /**
+ * Record the report on the job, when there is one to record.
+ *
+ * Called BEFORE the settle that follows it, so the durable mirror -- which persists the
+ * snapshot on the next transition -- writes a row that already carries the report. An
+ * ABSENT report is not an empty one: the file-authority mode performed no dimension
+ * commit, so it leaves the key off rather than inventing a reason per dimension.
+ *
+ * `undefined` is now the file-authority case ONLY. Every failure path records a report --
+ * `failed` per dimension after a rollback, `not-attempted` per dimension when the run died
+ * before the dimensions -- because a settling path that named no dimension is exactly the
+ * silence that hid the original defect.
+ *
+ * @param registry - Store the job lives in.
+ * @param jobId - Identity of the job being reported.
+ * @param dimensions - The report, when the run produced one.
+ * @param now - Clock, injected so a test can pin timestamps.
+ */
+function recordReport(
+  registry: JobRegistry,
+  jobId: string,
+  dimensions: readonly DimensionOutcome[] | undefined,
+  now: () => Date,
+): void {
+  if (dimensions === undefined) return;
+  registry.patchDimensions(jobId, dimensions, now());
+}
+
+/**
+ * The compile line a settled run reports.
+ *
+ * Derived from the report whenever there is one; the constant survives only for a run that
+ * recorded no report at all -- the file-authority mode, which performs no dimension commit.
+ * A constant is what the operator reported, so it is the fallback and never the answer.
+ *
+ * @param dimensions - The report the ingest half produced, when it produced one.
+ * @returns The derived line, or the historical constant when nothing was measured.
+ */
+function compiledMessageOf(dimensions: readonly DimensionOutcome[] | undefined): string {
+  return dimensions === undefined ? "Wiki compiled." : describeDimensionMessage(dimensions);
+}
+
+/**
+ * The report of an ingest whose transaction ROLLED BACK.
+ *
+ * Every dimension the coordinator touched is reported `failed`, because after the rollback
+ * none of their work exists. The naive mapping is the trap this exists to avoid:
+ *
+ *   - a `committed` run recorded before the rollback would map to `succeeded`, claiming
+ *     work the transaction removed;
+ *   - and it must never map to `declined`, whose clause reads "no changes" about work that
+ *     was performed and then discarded.
+ *
+ * `enabled` is taken from the runs themselves because a failed run is the only evidence
+ * left of which dimensions were resolved: a dimension the resolution never built has no run
+ * record, and saying `disabled` about it without evidence would be a guess.
+ *
+ * @param error - The failure, carrying the per-run state the coordinator recorded.
+ * @returns One `failed` outcome per dimension that was touched.
+ */
+function failedReportOf(error: IngestDimensionFailure): readonly DimensionOutcome[] {
+  const runs: DimensionRunReport[] = error.dimensionRuns.map((run) => ({
+    name: run.name,
+    state: "failed",
+    error: run.error ?? error.message,
+  }));
+  return describeDimensionOutcomes({
+    route: INGEST_DIMENSIONS,
+    enabled: runs.map((run) => run.name),
+    runs,
+  });
+}
+
+/**
+ * The report of a run that failed BEFORE any dimension was resolved.
+ *
+ * The failure is upstream of the dimension work -- an unreadable source, lock contention --
+ * so nothing can be said about any dimension beyond that fact. Every composed and enabled
+ * dimension is therefore reported `not-attempted`, which is NOT one of the reasons that
+ * describe a dimension the run resolved: `not-in-route` and `disabled` would blame the route
+ * or the switch, and `declined` would claim it ran and found nothing to write.
+ *
+ * Route and switch are the CONFIGURED answers here, because no run record survived to say
+ * otherwise: `INGEST_DIMENSIONS` is the route the async ingest composes, and
+ * {@link enabledDimensionNames} is the same pure environment parse every other reader uses.
+ * No database, no resolver, no Stack lookup -- this runs in a `catch`, after the work that
+ * would have opened a connection has already failed.
+ *
+ * @param env - The environment this job ran under.
+ * @returns One `not-attempted` entry per composed and enabled known dimension.
+ */
+function notAttemptedReportOf(env: NodeJS.ProcessEnv): readonly DimensionOutcome[] {
+  return describeDimensionOutcomes({
+    route: INGEST_DIMENSIONS,
+    enabled: enabledNamesOf(env),
+    runs: [],
+    attempted: false,
+  });
+}
+
+/**
+ * The dimensions the switch enables, with a refusal that must not swallow the settle.
+ *
+ * `enabledDimensionNames` is a pure parse of one environment variable, so a file-backed stack
+ * cannot make it throw. A MALFORMED value can: it refuses an unknown name with
+ * `DimensionActivationError`, in the same words `resolveDimensions` raises. That refusal is
+ * itself the failure this report is about, and letting it escape here would leave the job
+ * `running` forever -- a reporting bug destroying the status it exists to explain. So the
+ * report falls back to "every known dimension counts as enabled" and labels them
+ * `not-attempted`: the truthful statement, since nothing was reached.
+ *
+ * @param env - The environment this job ran under.
+ * @returns The enabled names, or every known name when the switch cannot be parsed.
+ */
+function enabledNamesOf(env: NodeJS.ProcessEnv): readonly DimensionName[] {
+  try {
+    return enabledDimensionNames(env);
+  } catch {
+    return [...KNOWN_DIMENSIONS];
+  }
+}
+
+/**
+ * The report of a run that is settling FAILED, whichever kind of failure it was.
+ *
+ * A rolled-back transaction already knows what each dimension did, so it reports each of them
+ * `failed`. Any OTHER error died upstream of the dimensions, and a report is still required:
+ * silence there is the defect that made an operator unable to tell an excluded dimension from
+ * one that never ran. Both arms name every known dimension, which is the property that matters.
+ *
+ * @param error - What the run threw.
+ * @param env - The environment this job ran under.
+ * @returns One outcome per known dimension.
+ */
+function failureReportOf(error: unknown, env: NodeJS.ProcessEnv): readonly DimensionOutcome[] {
+  return error instanceof IngestDimensionFailure
+    ? failedReportOf(error)
+    : notAttemptedReportOf(env);
+}
+
+/**
  * Run the compile half and record its outcome, including the `busy` case.
  *
  * `busy` is not a failure: the compile never started because another mutation holds
@@ -202,6 +350,7 @@ async function runCompileHalf(
   input: RunJobInput,
   now: () => Date,
   env: NodeJS.ProcessEnv,
+  dimensions: readonly DimensionOutcome[] | undefined,
 ): Promise<unknown> {
   const { registry, job, root } = input;
   if (!input.compile) {
@@ -224,7 +373,7 @@ async function runCompileHalf(
       settleCompile(registry, job.id, "busy", "Another compile holds the lock; retry.", now());
       return undefined;
     }
-    settleCompile(registry, job.id, "succeeded", "Wiki compiled.", now());
+    settleCompile(registry, job.id, "succeeded", compiledMessageOf(dimensions), now());
     return undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -260,7 +409,7 @@ async function runIngestJobUnder(input: RunJobInput): Promise<void> {
   const env = buildIngestEnv(input.stackId);
   const now = () => new Date();
   try {
-    const ingested = await ingestSource(
+    const ingested = await ingestSourceWithDimensions(
       root,
       job.source,
       jobObserverFor(registry, job.id, now),
@@ -269,9 +418,13 @@ async function runIngestJobUnder(input: RunJobInput): Promise<void> {
       {},
       input.dimensionsPort,
     );
-    settleIngestFromResult(registry, job.id, ingested.writeStatus, now());
-    await runCompileHalf(input, now, env);
+    recordReport(registry, job.id, ingested.dimensions, now);
+    settleIngestFromResult(registry, job.id, ingested.result.writeStatus, now());
+    await runCompileHalf(input, now, env, ingested.dimensions);
   } catch (error) {
+    // The report is recorded BEFORE the settle, so the durable mirror that persists the next
+    // transition already carries it. See `failureReportOf` for which report each failure gets.
+    recordReport(registry, job.id, failureReportOf(error, env), now);
     // Lock contention is the caller's retry signal, not a failure of the source:
     // nothing was written, so `failed` with the reason is the honest record.
     const busy = error instanceof LockBusyError;

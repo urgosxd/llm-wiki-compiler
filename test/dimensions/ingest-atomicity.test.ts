@@ -175,7 +175,8 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
 
   /**
    * A graph double that writes a REAL `stack_documents` row into the shared
-   * transaction. Used by the reverse-order case below.
+   * transaction. Used by the case below, which measures that a graph row written inside
+   * the transaction is rolled back when the wiki is the dimension that fails.
    */
   function graphRowWriter(db: ProvisionedStack["harness"]["db"], stackId: string): Dimension {
     return {
@@ -197,11 +198,15 @@ describe.skipIf(!provisioned)("atomic ingest across the shipped dimensions", () 
   }
 
   it("rolls the GRAPH back when the WIKI is the dimension that fails", async () => {
-    // `coordinator.ts` states "inside one transaction order is free". Every case in
-    // this file used to fail the graph, so only one ordering was measured: a wiki
-    // write followed by a graph failure. If the transaction boundary were tied to
-    // commit ORDER rather than to the transaction itself, the reverse case is where
-    // it would show.
+    // The graph rows are written BEFORE the throw by `failingWiki`'s own commit, which is
+    // why there is something to roll back at all.
+    //
+    // ARRAY ORDER DOES NOT DECIDE THE SEQUENCE any more, and this case no longer claims it
+    // does: the coordinator orders `wiki` before `kg` regardless of the order it is handed
+    // (S14, pinned by `test/dimensions/coordinator-report.test.ts`). So the `[kg, ...]`
+    // below is not what puts a graph write first -- `failingWiki` performing that write
+    // inside its own commit is. What the assertions still measure is the property they were
+    // written for: a WIKI failure rolls back a graph row that the same transaction wrote.
     const { db, stackId } = subject();
     const kg = graphRowWriter(db, stackId);
 

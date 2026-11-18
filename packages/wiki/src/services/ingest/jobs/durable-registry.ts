@@ -400,6 +400,18 @@ export function createDurableJobRegistry(
       mirror(id);
     },
     /**
+     * Attach the per-dimension report, and write the row that now carries it.
+     *
+     * Mirrored for the same reason every other transition is: the report is written BEFORE
+     * the settle that follows it, so a wrapper that forwarded without mirroring would leave
+     * the live record correct and the durable one -- the copy the MCP tools read -- with no
+     * report at all. That is the silence this field exists to end, one process away.
+     */
+    patchDimensions(id, dimensions, now) {
+      inner.patchDimensions(id, dimensions, now);
+      mirror(id);
+    },
+    /**
      * Drop the live entry, and deliberately write nothing.
      *
      * The durable row is NOT mirrored from here. A delete has to be conditioned on the

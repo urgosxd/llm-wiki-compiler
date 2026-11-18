@@ -67,7 +67,10 @@ export function registerJobTools(server: McpServer): void {
       title: "Ingest Job Status",
       description:
         "Read one async ingest job by id, including both dimensions (ingest and " +
-        "compile), their stages, and the transaction attempts so far. Reads the " +
+        "compile), their stages, and the transaction attempts so far. `dimensions` is the " +
+        "per-dimension report: one entry per dimension saying whether it ran and succeeded, " +
+        "was skipped and why (the route does not include it, `LLMWIKI_DIMENSIONS` disables " +
+        "it, or it had no changes), or failed with its error. Reads the " +
         "durable record the host writes, so it works even when the host is in " +
         "another process. `statusReason` says WHY it is in that state and whether " +
         "the claim was observed or derived; `compile.retryable` is true when a " +
@@ -95,7 +98,9 @@ export function registerJobTools(server: McpServer): void {
       title: "List Ingest Jobs",
       description:
         "List this Stack's recent async ingest jobs, newest transition first, with " +
-        "each job's ingest and compile status, the reason it is in that state " +
+        "each job's ingest and compile status, its per-dimension report (`dimensions`: " +
+        "which dimensions ran, which were skipped and why, and which failed), the reason " +
+        "it is in that state " +
         "(`statusReason`), and whether a retry is offered (`compile.retryable`). " +
         "Use it to find a job id or to see what is still running. Read-only. " +
         STACK_ARG_REQUIRED_NOTE,

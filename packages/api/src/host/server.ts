@@ -500,6 +500,7 @@ function unboundStackRegistry(
     patchIngest: (id, patch, now) => ownerOf(id).patchIngest(id, patch, now),
     patchCompile: (id, patch, now) => ownerOf(id).patchCompile(id, patch, now),
     patchAttempts: (id, attempts, now) => ownerOf(id).patchAttempts(id, attempts, now),
+    patchDimensions: (id, dimensions, now) => ownerOf(id).patchDimensions(id, dimensions, now),
     /**
      * Drop the live entry, through the wrapper that owns it.
      *

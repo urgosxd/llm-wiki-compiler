@@ -39,6 +39,7 @@
  */
 
 import { ulid } from "../../../utils/ulid.js";
+import type { DimensionOutcome } from "../../../dimensions/outcome.js";
 import {
   queuedCompileState,
   queuedIngestState,
@@ -100,6 +101,21 @@ export interface JobRegistry {
   patchCompile(id: string, patch: Partial<CompileDimensionState>, now: Date): void;
   /** Replace `id`'s attempt list. No-op for an unknown id. */
   patchAttempts(id: string, attempts: readonly AttemptRecord[], now: Date): void;
+  /**
+   * Attach the per-dimension report to `id`. No-op for an unknown id.
+   *
+   * A REQUIRED member of this contract, deliberately. The report exists because a value
+   * that could not distinguish "absent" from "failed" was silently useless, so a registry
+   * that quietly dropped it would reproduce the defect this field was added to fix. Making
+   * it required means the next implementer fails a type-check instead of going quiet --
+   * which is why every implementation of this interface, including the delegating literal
+   * in `packages/api/src/host/server.ts`, carries the method.
+   *
+   * @param id - Job to patch.
+   * @param dimensions - One outcome per known dimension, from the ingest that settled it.
+   * @param now - Instant of this transition.
+   */
+  patchDimensions(id: string, dimensions: readonly DimensionOutcome[], now: Date): void;
   /** Drop every job. Test seam only. */
   clear(): void;
 }
@@ -158,7 +174,11 @@ function evictExpired(jobs: Map<string, IngestJob>, now: Date): void {
 /** Apply a partial patch to a job record, always advancing `updatedAt`. */
 function withPatch(
   job: IngestJob,
-  patch: { ingest?: Partial<IngestDimensionState>; compile?: Partial<CompileDimensionState> },
+  patch: {
+    ingest?: Partial<IngestDimensionState>;
+    compile?: Partial<CompileDimensionState>;
+    dimensions?: readonly DimensionOutcome[];
+  },
   now: Date,
 ): IngestJob {
   return {
@@ -166,6 +186,13 @@ function withPatch(
     updatedAt: now.toISOString(),
     ingest: patch.ingest === undefined ? job.ingest : { ...job.ingest, ...patch.ingest },
     compile: patch.compile === undefined ? job.compile : mergeCompile(job.compile, patch.compile),
+    // The report is added EXPLICITLY and is NOT carried by the spread above: that spread
+    // merges the two HALVES (`ingest`, `compile`) into the record, while `dimensions` is a
+    // top-level field of its own. It is emitted here from the patch, and it survives later
+    // transitions because `...job` re-emits whatever the record already carries. Omitted
+    // rather than set to `undefined` when the patch does not mention it, so a job that never
+    // had a report keeps NO key.
+    ...(patch.dimensions === undefined ? {} : { dimensions: patch.dimensions }),
   };
 }
 
@@ -247,6 +274,12 @@ export function createJobRegistry(): RecoverableJobRegistry {
       const job = jobs.get(id);
       if (job === undefined) return;
       jobs.set(id, withPatch(job, { ingest: { attempts } }, now));
+    },
+
+    patchDimensions(id, dimensions, now) {
+      const job = jobs.get(id);
+      if (job === undefined) return;
+      jobs.set(id, withPatch(job, { dimensions }, now));
     },
 
     delete(id) {

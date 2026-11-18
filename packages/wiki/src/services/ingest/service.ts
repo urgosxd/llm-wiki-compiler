@@ -29,12 +29,14 @@ import { createHash } from "node:crypto";
 import type { DimensionsPort } from "../../sdk/core-types.js";
 import {
   createDimensionsDatabase,
+  describeDimensionOutcomes,
   ingestDimensions,
   resolveDimensions,
 } from "../../dimensions/index.js";
 import type {
   Dimension,
   DimensionName,
+  DimensionOutcome,
   DimensionsDatabase,
   IngestOutcome,
 } from "../../dimensions/index.js";
@@ -148,6 +150,39 @@ async function journalIngest(
 interface IngestDocumentInput { title: string; source: string; document: string; body: string }
 
 /**
+ * What one write produced, as the two paths that can perform it report it.
+ *
+ * One shape for both modes rather than a union the caller branches on: the file-authority
+ * mode simply reports no {@link dimensions}, because it performs no dimension commit at all.
+ */
+interface WrittenSource {
+  /** Path the source landed at: projected by the file mode, reported by a dimension.
+   * Absent only on a row-backed run where no dimension reported one, which the caller
+   * treats as a defect rather than a result. */
+  readonly artifactPath?: string;
+  /** Created / updated / unchanged, when the writer reports it. */
+  readonly writeStatus?: WriteStatus;
+  /**
+   * The per-dimension report, when dimensions ran.
+   *
+   * ABSENT in the file-authority mode, and deliberately: that mode writes `sources/<slug>.md`
+   * and no dimension commits anything, so a report would have to invent a reason for each
+   * dimension. "No report was recorded" is the honest answer there.
+   */
+  readonly dimensions?: readonly DimensionOutcome[];
+}
+
+/** What the ingest writes: where the source landed, how, and the per-dimension report. */
+interface IngestWriteOutcome {
+  /** Path the source landed at. */
+  readonly savedPath: string;
+  /** Created / updated / unchanged, never absent: a caller always reported something. */
+  readonly writeStatus: NonNullable<IngestResult["writeStatus"]>;
+  /** The per-dimension report, absent in the file-authority mode. */
+  readonly dimensions?: readonly DimensionOutcome[];
+}
+
+/**
  * Write one source into `sources/`, for the named mode where this wiki has no database.
  *
  * S2 of `odd/tasks/single-stack-authority.md`: "a wiki with no database at all is a
@@ -170,7 +205,7 @@ interface IngestDocumentInput { title: string; source: string; document: string;
 async function ingestAsFiles(
   root: string,
   input: IngestDocumentInput,
-): Promise<{ artifactPath: string; writeStatus: WriteStatus }> {
+): Promise<WrittenSource> {
   const projected = await projectSourceMarkdown(root, input);
   return { artifactPath: projected.artifactPath, writeStatus: projected.writeStatus };
 }
@@ -224,7 +259,10 @@ async function ingestAsFiles(
  *   which require a port and raise `MissingDimensionsPortError` when they were not
  *   given one; a shared function that threw on omission would break every caller
  *   that legitimately has no port (the SDK facade, the published surface).
- * @returns The written path and its write status.
+ * @returns The written path, its write status, and the per-dimension report when the
+ *   row-backed path ran. The report is built HERE because this is the only place that knows
+ *   both what the route composes ({@link INGEST_DIMENSIONS}) and which dimensions the
+ *   resolution actually enabled.
  * @throws {LockBusyError} When another mutation holds the project lock.
  * @throws {StackAuthorityError} When a database is configured and no Stack resolves;
  *   never a file-backed result in that case.
@@ -236,7 +274,7 @@ async function writeToDimensions(
   env: NodeJS.ProcessEnv = process.env,
   explicitStackId?: string,
   port?: DimensionsPort<Dimension>,
-): Promise<{ savedPath: string; writeStatus: NonNullable<IngestResult["writeStatus"]> }> {
+): Promise<IngestWriteOutcome> {
   // Built for this operation and released right after, because an unclosed pool keeps
   // the event loop alive. Building it in the named file mode is harmless and measured,
   // not assumed: the pool is LAZY, so a run that never queries opens no socket. The mode
@@ -277,7 +315,11 @@ async function writeToDimensions(
     throw new Error(`no file-backed dimension reported a write path for ${input.source}`);
   }
   observer?.ingest.stage("projecting");
-  return { savedPath: outcome.artifactPath, writeStatus: outcome.writeStatus ?? "created" };
+  return {
+    savedPath: outcome.artifactPath,
+    writeStatus: outcome.writeStatus ?? "created",
+    ...(outcome.dimensions === undefined ? {} : { dimensions: outcome.dimensions }),
+  };
 }
 
 /**
@@ -298,7 +340,8 @@ async function writeToDimensions(
  * @param stackId - The Stack the authority resolved.
  * @param request - Project root, source input, the one environment this run reads, the
  *   job observer, and the caller's dimensions port when it supplied one.
- * @returns What the coordinator wrote.
+ * @returns What the coordinator wrote, plus the report built from the per-run state it
+ *   recorded and the `enabled` list this run actually resolved.
  */
 async function ingestIntoStack(
   dimensionsDb: DimensionsDatabase,
@@ -310,23 +353,143 @@ async function ingestIntoStack(
     readonly observer: IngestJobObserver | undefined;
     readonly port: DimensionsPort<Dimension> | undefined;
   },
-): Promise<IngestOutcome> {
+): Promise<WrittenSource> {
   const { root, input, env, observer, port } = request;
-  // `env` reaches the dimensions because it carries the dimension switch, the Stack name
-  // and the connection string; `stackId` settles the one question this run answered.
-  return await ingestDimensions(
+  // The resolved list is held in a variable because it answers TWO questions that must not
+  // be answered twice: which dimensions to write, and which of them this run ENABLED.
+  // Re-deriving the second from the environment at report time would be a second reading of
+  // the switch, free to disagree with the one that decided the run.
+  //
+  // `env` reaches the resolution because it carries the dimension switch, the Stack name and
+  // the connection string; `stackId` settles the one question this run answered.
+  const resolved = port === undefined
+    ? resolveDimensions({ root, db: dimensionsDb.db, env, stackId })
+    : port.resolve({ only: INGEST_DIMENSIONS, env, root, db: dimensionsDb.db, stackId });
+  const outcome: IngestOutcome = await ingestDimensions(
     dimensionsDb.db,
     stackId,
     input,
-    port === undefined
-      ? resolveDimensions({ root, db: dimensionsDb.db, env, stackId })
-      : port.resolve({ only: INGEST_DIMENSIONS, env, root, db: dimensionsDb.db, stackId }),
+    resolved,
     { attempts: observer?.attempts },
   );
+  return {
+    ...(outcome.artifactPath === undefined ? {} : { artifactPath: outcome.artifactPath }),
+    ...(outcome.writeStatus === undefined ? {} : { writeStatus: outcome.writeStatus }),
+    dimensions: describeDimensionOutcomes({
+      // The CEILING this service composes, never widened: calling a dimension the route
+      // cannot run anything but `not-in-route` would be a different, false claim.
+      route: INGEST_DIMENSIONS,
+      enabled: resolved.map((dimension) => dimension.name),
+      runs: outcome.dimensionRuns,
+    }),
+  };
+}
+
+/**
+ * The result every ingest entry returns, built in one place.
+ *
+ * Both entry points build the same shape, so it is built once: the halves type carries no
+ * per-dimension information (see the split above), which means the only thing that may
+ * differ between two callers is WHICH halves fields they have, never how they are filled.
+ *
+ * @param savedPath - Where the source landed; its basename is the reported filename.
+ * @param extracted - The extracted content and whether it was truncated.
+ * @param identity - The source URI and the source type that was detected for it.
+ * @param writeStatus - Created / updated / unchanged, as the writer reported it.
+ * @returns The half of a run that every caller already reads.
+ */
+function ingestResultOf(
+  savedPath: string,
+  extracted: { readonly content: string; readonly truncated: boolean },
+  identity: { readonly source: string; readonly sourceType: SourceType },
+  writeStatus: NonNullable<IngestResult["writeStatus"]>,
+): IngestResult {
+  return {
+    filename: path.basename(savedPath),
+    charCount: extracted.content.length,
+    truncated: extracted.truncated,
+    source: identity.source,
+    sourceType: identity.sourceType,
+    writeStatus,
+  };
 }
 
 /**
  * Ingest a source (URL, file, PDF, DOCX, image, or transcript) into `sources/`.
+ *
+ * ## Why there are two exports over one body
+ *
+ * {@link ingestSourceWithDimensions} is the whole operation and also returns the
+ * per-dimension report; {@link ingestSource} is the thin delegation that returns only the
+ * result. The split exists because the report must NOT be folded into `IngestResult`: that
+ * type is the ingest HALF of a run, and modelling the dimensions on it is the conflation
+ * that made the reported gap invisible. So the halves type stays exactly as it was, and a
+ * caller that wants the report asks for it by name.
+ *
+ * @param root - Project root.
+ * @param source - A URL (http/https), YouTube URL, local file, PDF, DOCX, or image path.
+ * @param observer - Optional job observer.
+ * @param env - Environment the dimensions write with; defaults to `process.env`.
+ * @param stack - A Stack the caller named. Absent for every existing caller, which
+ *   leaves the run to the Stack its own environment NAMES -- and refuses, naming what
+ *   is missing, when it names none and a database is configured.
+ * @param port - The dimensions, injected by the caller that owns them. Omitted means
+ *   "resolve internally", exactly as before; see {@link writeToDimensions}.
+ * @returns The saved filename, character count and write status, plus the report when
+ *   dimensions ran. `dimensions` is absent in the file-authority mode, which performs no
+ *   dimension commit and therefore reports nothing rather than inventing a reason.
+ * @throws {LockBusyError} When another mutation holds the project lock.
+ */
+export async function ingestSourceWithDimensions(
+  root: string,
+  source: string,
+  observer?: IngestJobObserver,
+  env: NodeJS.ProcessEnv = process.env,
+  stack: IngestStackArgument = {},
+  port?: DimensionsPort<Dimension>,
+): Promise<{ result: IngestResult; dimensions?: readonly DimensionOutcome[] }> {
+  observer?.ingest.stage("detecting");
+  const sourceType = await detectSourceType(source);
+  output.status("*", output.info(`Ingesting [${sourceType}]: ${source}`));
+  verbose(`source type: ${sourceType}`);
+
+  observer?.ingest.stage("fetching");
+  const { title, content } = await fetchContent(source, sourceType);
+  verbose(`fetched: ${content.length} chars`);
+
+  observer?.ingest.stage("extracting");
+  const result = enforceCharLimit(content);
+  enforceMinContent(result.content);
+  const document = buildDocument(title, source, result, sourceType);
+  const { savedPath, writeStatus, dimensions } = await writeToDimensions(root, {
+    title,
+    source,
+    document,
+    body: result.content,
+  }, observer, env, stack.stackId, port);
+  verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
+
+  // Journal only real writes — a no-op re-ingest must not append a log line.
+  if (writeStatus !== "unchanged") {
+    observer?.ingest.stage("journaling");
+    // The SAME environment the dimensions wrote with, so the entry names the tenant
+    // whose pages were just written rather than the deployment this process runs in.
+    await journalIngest(root, title, source, savedPath, result.content.length, env);
+  }
+
+  return {
+    result: ingestResultOf(savedPath, result, { source, sourceType }, writeStatus),
+    ...(dimensions === undefined ? {} : { dimensions }),
+  };
+}
+
+/**
+ * Ingest a source (URL, file, PDF, DOCX, image, or transcript) into `sources/`.
+ *
+ * The operation every existing caller reaches; {@link ingestSourceWithDimensions} is the
+ * same body plus the per-dimension report. Kept as a delegation rather than a second
+ * implementation so the five callers that need only the result cannot drift from the one
+ * that needs the report.
  *
  * @param root - Project root.
  * @param source - A URL (http/https), YouTube URL, local file, PDF, DOCX, or image path.
@@ -348,43 +511,8 @@ export async function ingestSource(
   stack: IngestStackArgument = {},
   port?: DimensionsPort<Dimension>,
 ): Promise<IngestResult> {
-  observer?.ingest.stage("detecting");
-  const sourceType = await detectSourceType(source);
-  output.status("*", output.info(`Ingesting [${sourceType}]: ${source}`));
-  verbose(`source type: ${sourceType}`);
-
-  observer?.ingest.stage("fetching");
-  const { title, content } = await fetchContent(source, sourceType);
-  verbose(`fetched: ${content.length} chars`);
-
-  observer?.ingest.stage("extracting");
-  const result = enforceCharLimit(content);
-  enforceMinContent(result.content);
-  const document = buildDocument(title, source, result, sourceType);
-  const { savedPath, writeStatus } = await writeToDimensions(root, {
-    title,
-    source,
-    document,
-    body: result.content,
-  }, observer, env, stack.stackId, port);
-  verbose(`saved: ${savedPath} (${result.content.length} chars extracted)`);
-
-  // Journal only real writes — a no-op re-ingest must not append a log line.
-  if (writeStatus !== "unchanged") {
-    observer?.ingest.stage("journaling");
-    // The SAME environment the dimensions wrote with, so the entry names the tenant
-    // whose pages were just written rather than the deployment this process runs in.
-    await journalIngest(root, title, source, savedPath, result.content.length, env);
-  }
-
-  return {
-    filename: path.basename(savedPath),
-    charCount: result.content.length,
-    truncated: result.truncated,
-    source,
-    sourceType,
-    writeStatus,
-  };
+  const { result } = await ingestSourceWithDimensions(root, source, observer, env, stack, port);
+  return result;
 }
 
 /**
@@ -443,12 +571,5 @@ export async function ingestTextSource(
     await journalIngest(root, input.title, source, savedPath, result.content.length, env);
   }
 
-  return {
-    filename: path.basename(savedPath),
-    charCount: result.content.length,
-    truncated: result.truncated,
-    source,
-    sourceType: "file",
-    writeStatus,
-  };
+  return ingestResultOf(savedPath, result, { source, sourceType: "file" }, writeStatus);
 }
