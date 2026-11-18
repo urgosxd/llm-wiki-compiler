@@ -35,6 +35,22 @@ const TURBO_BUILD_LABEL = "Build the distribution and the @repo/kg artefact thro
 const TURBO_TEST_LABEL = "Run the full suite through the task graph";
 
 /**
+ * The label of the step that builds and smoke-tests the published image. A constant, not a
+ * literal: this label was renamed once and its pin was left behind, so the ordering pin and the
+ * uniqueness pin now share one place to meet.
+ */
+const IMAGE_BUILD_LABEL = "Build and smoke-test the published image and the KG reference recipe";
+
+/** The `build-and-test` step pairs the ordering assertion below pins, in that order. */
+const CI_STEP_ORDER: readonly (readonly [string, string])[] = [
+  ["pnpm install --frozen-lockfile", "Type-check the root project"],
+  ["Type-check the root project", TURBO_BUILD_LABEL],
+  ["Lint the house rules against their frozen baseline", TURBO_BUILD_LABEL],
+  [TURBO_BUILD_LABEL, IMAGE_BUILD_LABEL],
+  ["Verify tenant isolation is enforced", TURBO_TEST_LABEL],
+];
+
+/**
  * The commands those two steps run, in the bare `pnpm` form.
  *
  * `ci.yml` mentions `corepack` nowhere: both jobs provision pnpm and Node through
@@ -163,18 +179,19 @@ describe("control gates — CI wiring", () => {
     expect(jobCommands(workflow, "build-and-test"), "the build step must still enter the graph").toContain(
       TURBO_BUILD_COMMAND,
     );
-    const order: readonly (readonly [string, string])[] = [
-      ["pnpm install --frozen-lockfile", "Type-check the root project"],
-      ["Type-check the root project", TURBO_BUILD_LABEL],
-      ["Lint the house rules against their frozen baseline", TURBO_BUILD_LABEL],
-      [TURBO_BUILD_LABEL, "Build and smoke-test the published image and the KG reference recipe"],
-      ["Verify tenant isolation is enforced", TURBO_TEST_LABEL],
-    ];
-    for (const [before, after] of order) {
+    for (const [before, after] of CI_STEP_ORDER) {
       expect(index(before), `${before} must be a step label in ci.yml`).toBeGreaterThan(-1);
       expect(index(after), `${after} must be a step label in ci.yml`).toBeGreaterThan(-1);
       expect(index(before), `${before} must precede ${after}`).toBeLessThan(index(after));
     }
+  });
+
+  // The ordering pin resolves its steps with `indexOf`, which answers with the FIRST match, so a
+  // duplicate label would leave it comparing a step nobody named — green, and no longer about the image.
+  it("labels the image build step exactly once", () => {
+    const labels = stepLabels(readWorkflow(".github/workflows/ci.yml"), "build-and-test");
+    const labelled = labels.filter((label) => label === IMAGE_BUILD_LABEL);
+    expect(labelled, "a duplicate label would make the ordering pin resolve the wrong step").toHaveLength(1);
   });
 });
 
