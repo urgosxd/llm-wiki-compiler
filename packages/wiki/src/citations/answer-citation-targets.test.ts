@@ -50,12 +50,16 @@ afterEach(async () => {
 });
 
 /** Write `stem` under `wiki/<directory>/` as a real page and return the project root. */
-async function stackWithPage(directory: "concepts" | "queries", stem: string): Promise<string> {
+async function stackWithPage(
+  directory: "concepts" | "queries",
+  stem: string,
+  body: string = `The body of ${stem}.`,
+): Promise<string> {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "answer-citation-targets-")));
   created.push(root);
   const file = path.join(root, "wiki", directory, `${stem}.md`);
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, `---\ntitle: "${stem}"\n---\n\nThe body of ${stem}.\n`);
+  await fs.writeFile(file, `---\ntitle: "${stem}"\n---\n\n${body}\n`);
   return root;
 }
 
@@ -142,6 +146,67 @@ describe("a body wikilink naming an existing page by its qualified identity", ()
     const html = renderBody("Grounded in [[concepts/ghost]].", await collectViewerPages(root));
 
     expect(html).toContain('data-missing="true"');
+  });
+});
+
+/**
+ * The link graph is the THIRD path over the same targets: `collectViewerPages`
+ * records outgoing links and dangling ghosts through the regex extractors in
+ * `packages/wiki/src/wiki/collect.ts` (`extractWikilinkSlugs` / `extractWikilinkTargets`),
+ * not through the tokenizer. A rendering that resolves while the graph still calls
+ * the same link dangling is the same defect in a third place.
+ */
+describe("the viewer link graph of a body citing a page by its qualified identity", () => {
+  it("records the qualified link and keeps only genuinely absent targets dangling", async () => {
+    const root = await stackWithPage("concepts", "test2", "See [[concepts/test2]] and [[queries/test2]].");
+    const page = (await collectViewerPages(root)).find((candidate) => candidate.slug === "test2");
+
+    // `queries/test2` names no page in this stack, so it stays dangling — while the
+    // separator-mangled `conceptstest2` may not appear anywhere.
+    expect(page?.outgoingLinks).toEqual(["concepts/test2"]);
+    expect(page?.danglingLinks.map((link) => link.slug)).toEqual(["queries/test2"]);
+  });
+});
+
+/**
+ * The S7 property over a stack of arbitrary pages: every citation form of an
+ * existing page — its qualified id, its bare stem, and the title the helper writes
+ * into frontmatter (the same text as the stem) — resolves to that page's identity.
+ * Pages are the case, expectations are derived: no per-page hardcoding.
+ */
+describe("every citation form of an existing page resolves to that page", () => {
+  it.each([
+    ["concepts", "test2"],
+    ["concepts", "rbac-por-oficina"],
+    ["concepts", "7-subdominios-ddd"],
+    ["concepts", "7. Subdominios DDD"],
+    ["queries", "test2"],
+  ])("%s/%s resolves as qualified id, bare stem and frontmatter title", async (directory, stem) => {
+    const root = await stackWithPage(directory as "concepts" | "queries", stem);
+    const page = await retainedIdentity(root, directory, stem);
+    const viewerPage = (await collectViewerPages(root))
+      .find((candidate) => candidate.pageDirectory === directory && candidate.slug === stem);
+    // The helper writes `title: "<stem>"`, so the frontmatter-title form is proven for
+    // the case where the title and the filename stem are the same text. A title that
+    // differs from the stem has no resolver here unless the page declares it as an
+    // alias (see `hasAliasSlug` in the viewer resolver).
+    for (const cited of [page.id, stem, viewerPage?.title]) {
+      const report = await reportAnswerCitations(root, `Grounded in [[${cited}]].`);
+      expect(report.citations).toMatchObject([{ status: "resolved", pageId: page.id }]);
+    }
+  });
+});
+
+/**
+ * The namespace decision, pinned as intent: an explicit namespace is never
+ * second-guessed, so no future cross-namespace fallback can be added silently.
+ */
+describe("a qualified citation is confined to its own namespace", () => {
+  it("keeps [[queries/test2]] broken when only concepts/test2 exists", async () => {
+    const root = await stackWithPage("concepts", "test2");
+    const report = await reportAnswerCitations(root, "Grounded in [[queries/test2]].");
+
+    expect(report.citations).toMatchObject([{ target: "queries/test2", status: "broken" }]);
   });
 });
 

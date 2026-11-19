@@ -28,7 +28,8 @@
 
 import { readdir, readFile, lstat, open } from "fs/promises";
 import path from "path";
-import { parseFrontmatterStatus, slugify } from "../utils/markdown.js";
+import { parseFrontmatterStatus } from "../utils/markdown.js";
+import { normalizeWikilinkTarget } from "./wikilink-tokens.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import type { PageDirectory } from "../export/types.js";
 import { safeRealpath, isInsideDir } from "../utils/path-confine.js";
@@ -73,17 +74,20 @@ export interface RawWikiPage {
 }
 
 /**
- * Extract the slugs of all pages linked via `[[wikilinks]]` in the body.
- * Wikilink targets ARE slugified — the human-typed link text may not match
- * the on-disk filename verbatim, so we normalize to the same shape `slugify`
- * produces. Returns deduplicated targets.
+ * Extract the normalized targets of all pages linked via `[[wikilinks]]` in the
+ * body. Extraction shares the tokenizer's ONE normalization rule
+ * (`normalizeWikilinkTarget`): the human-typed link text may not match the
+ * on-disk filename verbatim, so it is slugified — but a qualified
+ * `<namespace>/<page>` target keeps its namespace and only its page part is
+ * slugified, so the link graph resolves the same links the renderer does.
+ * Returns deduplicated targets.
  */
 export function extractWikilinkSlugs(body: string): string[] {
   const slugs = new Set<string>();
   WIKILINK_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = WIKILINK_RE.exec(body)) !== null) {
-    slugs.add(slugify(match[1].trim()));
+    slugs.add(normalizeWikilinkTarget(match[1].trim()));
   }
   return [...slugs];
 }
@@ -101,7 +105,7 @@ export function extractWikilinkTargets(body: string): { slug: string; display: s
   while ((match = WIKILINK_RE.exec(body)) !== null) {
     const target = match[1].trim();
     const alias = match[2]?.trim();
-    const slug = slugify(target);
+    const slug = normalizeWikilinkTarget(target);
     const display = alias ?? target;
     if (!seen.has(slug)) {
       seen.add(slug);
