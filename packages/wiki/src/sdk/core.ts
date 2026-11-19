@@ -147,8 +147,16 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         ensureProviderAvailable();
         // The registry source is an internal handle, never part of the public SDK
         // options, so the facade resolves it here for every embedder.
+        //
+        // `env` is forwarded for the reason `lint` states, and the answer has a seam
+        // for it to reach: `generateAnswer` resolves the answer-citation index through
+        // `withRawPageSource(root, options.env ?? process.env, …)` (`commands/query.ts`).
+        // Dropping it let one answer describe two tenants -- retrieval and hydration read
+        // the Stack the handle names while the citation verdicts came from the AMBIENT
+        // one, so a page only the ambient Stack holds was reported `resolved` under ITS
+        // `pageId` and the page the answer was grounded in was reported `broken`.
         return withRegistrySource(env, (registrySource) =>
-          generateAnswer(root, question, { ...opts, registrySource }),
+          generateAnswer(root, question, { ...opts, registrySource, env }),
         );
       }),
 

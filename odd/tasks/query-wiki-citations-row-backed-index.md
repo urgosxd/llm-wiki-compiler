@@ -30,6 +30,9 @@ Restores answer-citation resolution on row-backed Stacks: `collectAnswerCitation
 - [x] T2 — thread the page-source seam into the citation index and make an unreadable index an error; RED then GREEN. S1, S3, S4, S5, S6, S7. Commit 2 (`fix(citations): read the citation index through the page-source seam`) — its SHA cannot be written inside its own diff; it is reported in the handoff and in `git log`.
 - [x] T3 — disk-versus-rows differential on identical content. S8, S2. Commit 3 (`test(citations): pin disk and row citation verdicts to one answer`) — its SHA cannot be written inside its own diff; it is reported in the handoff and in `git log`.
 - [ ] T4 — independent verification and gates. S9, S10.
+- [x] T5 — forward the SDK's captured environment into answer generation, and pin it with `test/sdk/query-citation-env.test.ts` (the SDK door of S4, and S5 through it). Commit 4 (`fix(sdk): forward the caller's environment into answer generation`).
+- [x] T6 — pin the alias carrier `createRawPageSource` gained in T2 with one case on `RawPageSource`, present and absent. S8. Commit 5 (`test(pages): pin aliases on the row-backed raw page source`).
+- [ ] T7 — independent re-verification of T5 and T6 by a verifier that did not write them. S9, S10.
 
 ## Log
 
@@ -311,3 +314,94 @@ suite's own database server is the container that run created; the leftover
 **S10 stands, unchanged.** This differential proves disk and rows agree on ONE fixture in a
 scratch Stack. It does not show the human's production citations resolving, and no such
 claim is made here.
+
+### L4 — T5/T6 evidence: the SDK door, and the alias pin (covers S4, S5, S8, S9, S10)
+
+**The verifier's finding, re-confirmed here before any change (S4, S5 at the SDK door).**
+`sdk/core.ts:86` captures the caller's environment once (`const env = options.env ?? process.env`)
+and `:146-148` opened `withRegistrySource(env, …)` with it — then called
+`generateAnswer(root, question, { ...opts, registrySource })` WITHOUT it, while
+`generateAnswer` resolves the citation index through
+`withRawPageSource(root, options.env ?? process.env, …)` (`commands/query.ts:230`).
+`GenerateAnswerOptions.env` already existed (`commands/query.ts:139-147`), so no type was
+widened. The other two doors DO pass it: MCP `mcp/wiki-read-tools.ts:99-114`
+(`withEmbeddingStoreSource(env)` + `withRegistrySource(env)` + `env`) and the CLI
+`commands/query.ts:348-360` (`env: process.env`). The SDK door was the only miss.
+
+**RED, observed before the fix** (`test/sdk/query-citation-env.test.ts`, two Stacks,
+process serving Stack A, handle naming Stack B, no `wiki/` tree, LLM module mocked):
+
+```
+ FAIL  test/sdk/query-citation-env.test.ts > resolves citations from the Stack the handle names, never the ambient one
+AssertionError: expected [ { target: 'alpha-b', …(1) }, …(1) ] to deeply equal [ { target: 'alpha-b', …(2) }, …(1) ]
+-     "pageId": "concepts/alpha-b",
+-     "status": "resolved",
++     "status": "broken",
+      "target": "alpha-b",
+-     "status": "broken",
++     "pageId": "concepts/alpha-a",
++     "status": "resolved",
+      "target": "alpha-a",
+```
+
+That is the verifier's result reproduced: the page the answer was GROUNDED in
+(`concepts/alpha-b`, the handle's Stack) reported `broken`, while a page only the AMBIENT
+Stack holds reported `resolved` under ITS `pageId` — another tenant's page identity. RED run
+counts: `Test Files 1 failed | 1 passed (2)`, `Tests 1 failed | 4 passed (5)`, nothing skipped
+(the passing file is T6's, whose behaviour was already correct).
+
+**The fix, one line and its comment.** `sdk/core.ts` now calls
+`generateAnswer(root, question, { ...opts, registrySource, env })`. GREEN, same command:
+`Test Files 2 passed (2)`, `Tests 5 passed (5)`, nothing skipped.
+
+**PRESERVE.** SDK `query` is the region changed; the neighbouring SDK suites that share this
+object were run: `test/sdk/{acceptance,facade-env-threading,core-composition,quiet-concurrency,surface,search-embedding-source}.test.ts`
+→ `Test Files 6 passed (6)`, `Tests 26 passed (26)`. `generateAnswer` itself is unchanged, so
+the CLI and MCP callers are untouched by this diff.
+
+**Seam-reaching calls in the SDK, classified (the enumeration T5 asked for).** Forward the
+captured env: `ingest`/`ingestText` (`core.ts:96-101`), `compile` (`:113-121`), `search`
+(`:119-141`), `getPage`/`listPages` (`:166-171`), `status` (`:190-195`), `lint`/`lintByTier`
+(`:205-207`), `query` (`:145-161`, after this fix). DO NOT forward, and cannot without
+changing a non-SDK signature — reported as gaps, not widened silently here:
+
+- `getContextPack` (`core.ts:212`) — `buildContextPack` accepts `options.env`
+  (`context/build.ts:117`, reaching `buildViewerSnapshot` → `withRawPageSource`,
+  `viewer/snapshot.ts:164`) and the facade passes none.
+- `exportOkf` (`core.ts:233`) — `OkfExportOptions.env` (`export/okf/run.ts:13`) reaching
+  `withRawPageSource` (`:19`); the facade passes no env.
+- `importOkf` (`core.ts:235`) — `OkfImportOptions.env` (`import/run.ts:46`) reaching the
+  page write seam; the facade passes no env.
+- `exportJson` (`core.ts:224`) — `exportJson` hard-codes `process.env`
+  (`commands/export.ts:270`) and its `ExportJsonOptions` has no `env`; forwarding would mean
+  changing a CLI-facing signature, so it is named here instead.
+- `runEval` (`core.ts:227`) — `runEval` takes no environment at all (`eval/index.ts:57-63`).
+
+These four are the same class of defect as T5, and each is a separate public-method
+behaviour change needing its own corpus proof; folding them into this commit would have made
+one review unit carry four unpinned changes. Recommended follow-up: one task that forwards
+them together with a per-method Stack-versus-ambient case.
+
+**T6 — the alias pin, and it needed no production change.** `createRawPageSource`'s `toRaw`
+already emits `frontmatter.aliases` when a row declares any (`page-scan-source.ts:296`,
+`...(page.aliases !== undefined && page.aliases.length > 0 ? { aliases: page.aliases } : {})`).
+`test/dimensions/raw-page-source.test.ts` gained ONE case: a row with `aliases: [x, y]`
+yields `frontmatter.aliases === ["x", "y"]`, and a row with no aliases has NO `aliases` key.
+Both halves passed on the first run — the pin, not a fix. The file's one suite had its
+fixture hooks hoisted to module scope: its `describe` body sat exactly at the
+`max-lines-per-function` limit of 39, so the new case could not fit inside it, and hoisting
+the per-test hooks (semantically identical, one suite per file) is what kept every function
+under the house limit without touching a single existing assertion.
+
+**Gates, this run.** `pnpm exec vitest run test/sdk/query-citation-env.test.ts
+test/dimensions/raw-page-source.test.ts` → `Test Files 2 passed (2)`, `Tests 5 passed (5)`,
+nothing skipped; `pnpm exec tsc --noEmit` → no output (clean); `pnpm run typecheck:tests` →
+`1757 files checked; 237 baseline diagnostics in 85 files; no regression`; `pnpm run lint` →
+`1839 files scanned; 556 baseline violations … no regression`. Every database server in these
+runs was one the run created (`amazing_haibt`, `practical_babbage`, `ecstatic_ganguly`,
+`musing_rubin`); the leftover `crazy_heyrovsky` on `:5434` was neither adopted nor touched.
+
+**S10 stands.** This proves ONE handle bound to Stack B resolves B's page and reports the
+ambient Stack's page `broken`. It does not show the human's production citations resolving,
+and no such claim is made.
+
