@@ -138,7 +138,7 @@ Every `path:line` below was printed by a command run against this repository; no
 ```diff
 --- a/agents/wiki-agentic-search.md
 +++ b/agents/wiki-agentic-search.md
-@@ -45,3 +45,9 @@
+@@ -45,6 +45,13 @@
  - `query_stack` needs a `stackId` and returns a reasoning/confidence chain plus
    entity and relationship bullets — not prose, and not citation slugs. Do not
    cite it like a page.
@@ -149,7 +149,12 @@ Every `path:line` below was printed by a command run against this repository; no
 +  `false`) returns both classes; a non-boolean such as `"false"` is refused.
 +- `traverse_stack` and `get_entities` take the same `accepted_only` argument
 +  with the same meaning and the same default.
+ - `list_stacks` is the only way to get a stack id, and it serves both dimensions:
+   call it first, never invent one.
+ 
 ```
+
+**Verified machine-applicable [CORRECTED — L35].** The block above was checked with `git apply --check` against a copy of the real file, so the patch applies as written and both its added lines and its three trailing context lines are current as of this document's commit on `feat/kg-rejected-edges-in-graph`.
 
 Applying it is the human's step; nothing in this repository can do it.
 
@@ -372,3 +377,5 @@ Asked what a normal query returns, the human chose, verbatim: "Incluidas, pero m
 **L33** — review workload, stated rather than discovered by the reviewer. **6,517 authored changed lines across 11 work-unit commits** — measured as `git diff --shortstat 8109873f..HEAD` = 55 files changed, 5,836 insertions, 681 deletions, with `git rev-list --count 8109873f..HEAD` = 11. That is well past the ~400-line work-unit guidance, and the ordinary reasons apply (a schema slice, a persistence slice, a consumer slice and a status slice are separable, but the consumer slice alone is a cross-package sweep). **This is the largest risk attached to this branch's review, and it is a review-risk, not a defect claim.** Nothing is split retroactively here: history is not rewritten to make a diff look smaller.
 
 **L34** — residual risk accepted, with its follow-up named. On entity JSON the classification block is published only when the row is REFUSED — `properties.ontology_classification`, written by `withOntologyClass` (`packages/llmwiki-kg/ts/src/core/aks_serializers.ts:160-167`) — so **absence means `accepted`**, which is precisely the "one optional key among twenty" convention the original brief distrusted and which S4 itself was written to defeat. Publishing `accepted` explicitly on every entity would reshape every accepted payload and hand every consumer a new key on the bytes it already trusts; that trade was not taken inside this feature. The consequence is a reader who does not know the convention can read an unmarked entity as unclassified rather than accepted. **Follow-up named, not done:** publish the class on every entity row once a consumer asks for it, or when AKS `0.2.0` (L27) makes the field declared rather than reserved.
+
+**L35** — the proposed agent-definition diff was corrected to actually apply, and the correction is measured rather than asserted. The block at S4 carried content that was right and a hunk header that was not: `@@ -45,3 +45,9 @@` declared three added lines while the block adds **seven**, and the hunk had no trailing context at all, so it terminated mid-file. An independent verifier measured both failures on a copy of the target: `git apply --check` → `error: patch failed: agents/wiki-agentic-search.md:45` / `error: agents/wiki-agentic-search.md: patch does not apply`, exit 1, and `patch -p1 --dry-run` → `Hunk #1 FAILED at 45`, exit 1. The header is now `@@ -45,6 +45,13 @@` (three leading context lines, seven added lines, three trailing context lines = 6 old / 13 new) and the three trailing context lines are the ones at `48-50` of the real file — the `list_stacks` bullet, its `call it first, never invent one.` continuation, and the blank line after them — copied verbatim from that file. **The anchor did not move** — `query_stack`'s OUTPUT description remains at `45-47` of `/home/urgosxd/.pi/agent/agents/wiki-agentic-search.md` — and **the seven added prompt lines were not reworded**; only the header and the trailing context changed. Neither the target file nor any source file was touched: that file is outside this repository (S4), and applying the patch remains the human's step. **Verification, run in a scratch copy under `/tmp`, never in the worktree and never committed as a test:** `git apply --check -v p.diff; echo EXIT=$?` printed `Checking patch agents/wiki-agentic-search.md...` and `EXIT=0`; `git apply p.diff && git diff --stat` then printed `agents/wiki-agentic-search.md | 7 +++++++`, `1 file changed, 7 insertions(+)`, and the resulting `git diff` shows exactly the seven added lines with no other line moved (target file 106 → 113 lines). Risk: none — a documentation block changed inside this task document, no source, no data, no contract.
