@@ -205,17 +205,35 @@ describe("a relationship-only rejection keeps the entities", () => {
     expect(companyEmploysCompany.rescued).toHaveLength(2);
   });
 
-  it("does NOT rescue anything when an entity type is undeclared", () => {
-    // The boundary of the recovery. An undeclared entity type means the model
-    // produced something the ontology does not have, so there is nothing to keep —
-    // and keeping it would defeat the allowlist this feature exists to enforce.
-    const { rejected, rescued } = parseTripletsWithOntology(
+  it("now persists BOTH endpoints when an entity type is undeclared, the offending one rejected", () => {
+    // The asymmetry this flips. An undeclared entity type used to keep NOTHING —
+    // `rejectionSparksEndpoints` answered "a rejection naming an entity type leaves
+    // nothing to keep" — while the other three reasons kept both endpoints, so
+    // `[ALIEN_CONSTRUCT EMPLOYS PERSON]` silently deleted two named nodes. Under two
+    // classes the asymmetry is gone: the endpoint carrying the refused type is stored
+    // as `rejected` (with that type and that reason), and the endpoint nothing was
+    // found wrong with is stored as `accepted`. The class is decided per ENDPOINT,
+    // because a rejection names one offending type and one accusation cannot be
+    // stretched over both ends of the triplet.
+    const { rejected, rescued, rejectedTriplets } = parseTripletsWithOntology(
       payload("ALIEN_CONSTRUCT", "EMPLOYS", "PERSON"),
       CONSTRAINED,
     );
 
     expect(rejected[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
-    expect(rescued).toEqual([]);
+    expect(rescued).toEqual([
+      { name: "Acme", type: "ALIEN_CONSTRUCT" },
+      { name: "Ada", type: "PERSON" },
+    ]);
+    expect(rejectedTriplets[0]?.endpoints).toEqual([
+      {
+        name: "Acme",
+        type: "ALIEN_CONSTRUCT",
+        verdict: "rejected",
+        reason: "UNKNOWN_ENTITY_TYPE",
+      },
+      { name: "Ada", type: "PERSON", verdict: "accepted" },
+    ]);
   });
 
   it("rescues nothing when every triplet is admitted", () => {

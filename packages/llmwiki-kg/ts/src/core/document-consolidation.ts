@@ -6,6 +6,7 @@ import type { Database } from "../db.js";
 import { bindCallerStack } from "./stack_resolver.js";
 import { extractionModel } from "./llm/endpoints.js";
 import type { ExtractedEntity, ExtractedRelationship } from "./extraction.js";
+import type { OntologyClassification } from "./ontology.js";
 import type { ClassificationState } from "../schema-open-classification.js";
 
 /**
@@ -40,8 +41,15 @@ type EntityLookupRow = {
  *
  * `identityKey` is what makes two mentions ONE row (S28, S43): the caller resolves
  * identity first (T5) and this function honours it instead of re-deriving a name.
+ *
+ * The ontology class is optional here for the same reason as the rest: the routes that
+ * never enforce a declaration keep the behaviour they had, and an absent class means the
+ * row is accepted — which is the column's own default and the state every row written
+ * before the class existed is in. A caller that DID enforce one always supplies it.
  */
-export interface ConsolidationEntity extends ExtractedEntity {
+export interface ConsolidationEntity
+  extends ExtractedEntity,
+    Partial<OntologyClassification> {
   /** The identity this mention resolved to; absent leaves the trigger to derive it. */
   readonly identityKey?: string;
   /** What the extractor proposed, kept beside the projection label. */
@@ -57,8 +65,14 @@ export interface ConsolidationEntity extends ExtractedEntity {
  * a relation nobody could map keeps its meaning instead of collapsing into a
  * generic one (S31). `identityKey` is what keeps two distinct free predicates
  * between the same endpoints apart (S33).
+ *
+ * The ontology class rides along exactly as it does on {@link ConsolidationEntity}:
+ * absent means accepted, and a caller that enforced a declaration supplies the verdict
+ * and the reason, so a rejected edge is a ROW rather than a count (S1).
  */
-export interface ConsolidationRelationship extends ExtractedRelationship {
+export interface ConsolidationRelationship
+  extends ExtractedRelationship,
+    Partial<OntologyClassification> {
   /** The original predicate; absent leaves the trigger to copy `type`. */
   readonly predicate?: string;
   /** The predicate-derived identity key; absent leaves the trigger to derive it. */
@@ -115,6 +129,10 @@ async function findExistingEntity(
  * A NULL description is treated as empty and written back as `''`, and the
  * description is replaced only when strictly longer — both measured on the
  * oracle.
+ *
+ * The ontology class is NOT rewritten: a row found by name keeps the verdict it was
+ * inserted with, so a re-extraction cannot flip a stored class. Correcting a class on
+ * an existing row is a separate decision, not a side effect of corroboration.
  */
 async function updateEntity(
   tx: DatabaseHandle,
@@ -153,6 +171,13 @@ async function updateEntity(
  * supplied nothing, which is not a placeholder: the landed triggers fill
  * `proposed_type` from `type` and `identity_key` from `lower(btrim(name))`, and
  * NULL `classification_state` means "no decision was recorded".
+ *
+ * The three ONTOLOGY columns are bound here and nowhere else, and never from a
+ * default of their own: `ontology_verdict` is the class as the caller decided it,
+ * `ontology_rejection_reason` is why, and `ontology_offending_type` is the type that was
+ * refused. Binding the reason is what makes the verdict legible: a row marked
+ * `rejected` with no reason is refused by `ontology_rejection_reason_requires_rejected`,
+ * and a row marked `accepted` beside a reason is refused by the same CHECK.
  */
 async function insertEntity(
   tx: DatabaseHandle,
@@ -163,14 +188,18 @@ async function insertEntity(
     insert into ontology_entities (
       stack_id, name, type, description, confidence,
       extracted_by_model, source_kind, pipeline,
-      identity_key, proposed_type, classification_state
+      identity_key, proposed_type, classification_state,
+      ontology_verdict, ontology_rejection_reason, ontology_offending_type
     )
     values (
       ${stackId}, ${entity.name}, ${entity.type}, ${entity.description},
       ${entity.confidence}, ${extractionModel()},
       ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
       ${entity.identityKey ?? null}, ${entity.proposedType ?? null},
-      ${entity.classificationState ?? null}
+      ${entity.classificationState ?? null},
+      ${entity.ontologyVerdict ?? "accepted"},
+      ${entity.ontologyRejectionReason ?? null},
+      ${entity.ontologyOffendingType ?? null}
     )
     returning id
   `);
@@ -424,18 +453,28 @@ export async function consolidateRelationshipRowsDetailed(
     // The original verb travels in `predicate`, which the trigger copies from `type`
     // when the caller supplied none, and `identity_key` is what keeps two distinct
     // free predicates between the same endpoints apart (S33).
+    //
+    // The three ontology columns are bound exactly as the entity insert binds them, so
+    // an edge the ontology refused is a ROW with its reason instead of a counter that
+    // describes nothing. They are deliberately ABSENT from the `do update` clause: the
+    // class of the row that already occupies this identity survives a re-ingest, so a
+    // later write can neither downgrade nor upgrade it.
     await tx.execute(sql`
       insert into ontology_relationships (
         stack_id, from_entity_id, to_entity_id, type,
         description, confidence, extracted_by_model, source_kind, pipeline,
-        predicate, identity_key, classification_state
+        predicate, identity_key, classification_state,
+        ontology_verdict, ontology_rejection_reason, ontology_offending_type
       )
       values (
         ${stackId}, ${fromId}, ${toId}, ${relationship.type},
         ${relationship.description}, ${relationship.confidence},
         ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
         ${relationship.predicate ?? null}, ${relationship.identityKey ?? null},
-        ${relationship.classificationState ?? null}
+        ${relationship.classificationState ?? null},
+        ${relationship.ontologyVerdict ?? "accepted"},
+        ${relationship.ontologyRejectionReason ?? null},
+        ${relationship.ontologyOffendingType ?? null}
       )
       on conflict (stack_id, from_entity_id, to_entity_id, type)
       do update set

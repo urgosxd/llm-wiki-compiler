@@ -38,6 +38,7 @@
 
 import { readFile } from "node:fs/promises";
 
+import type { OntologyVerdict } from "../schema.js";
 import { parseTriplets, type StandaloneEntity, type Triplet } from "./graph-parse.js";
 
 /** One `child IS_A parent` edge between two declared entity types. */
@@ -104,18 +105,85 @@ export interface RejectedTriplet {
   readonly offendingType: string;
 }
 
+/**
+ * The class and the reason a persisted row carries, in the columns' own vocabulary.
+ *
+ * One shape for entities and for relationships on purpose: both tables carry the same
+ * three columns, and two shapes would let a writer mark one table's row with the
+ * other's convention. Absent fields mean "nothing to say", which for `accepted` rows
+ * is the whole answer and for `rejected` rows would be a half-state — see
+ * {@link ClassifiedEndpoint} for why that is unrepresentable at the endpoint level.
+ */
+export interface OntologyClassification {
+  /** The two classes: what the ontology vouched for, and what it refused. */
+  ontologyVerdict: OntologyVerdict;
+  /** Why it was refused; present exactly when {@link ontologyVerdict} is `rejected`. */
+  ontologyRejectionReason?: RejectionReason;
+  /** The type the classifier refused, kept so the reason survives onto the row. */
+  ontologyOffendingType?: string;
+}
+
+/**
+ * One endpoint of a rejected triplet, with the class its row must carry.
+ *
+ * The class is decided per ENDPOINT, never per triplet: a rejection names ONE
+ * offending type, so the endpoint carrying it is `rejected` while the other endpoint
+ * of the same triplet was found wrong in no way at all and is therefore `accepted`.
+ * Marking both rejected would stretch one accusation over two rows; marking both
+ * accepted would store a refused type as if the ontology had admitted it.
+ *
+ * A discriminated union rather than two optional fields, because `rejected` with no
+ * reason is the half-state the `ontology_rejection_reason_requires_rejected` CHECK
+ * refuses in SQL, and it is cheaper to make it unrepresentable here.
+ */
+export type ClassifiedEndpoint =
+  | { readonly name: string; readonly type: string; readonly verdict: "accepted" }
+  | {
+      readonly name: string;
+      readonly type: string;
+      readonly verdict: "rejected";
+      readonly reason: RejectionReason;
+    };
+
+/**
+ * A rejected triplet paired with what a writer must persist for it.
+ *
+ * {@link OntologyParseResult.rejected} answers "what did the ontology turn away",
+ * which is what the status line counts. This answers the question that only exists
+ * once a rejection is no longer discarded: which rows must exist, and with which
+ * class. The parsed triplet travels because the flattened record keeps names only,
+ * while the relationship row also needs the endpoint types and the verb as written.
+ */
+export interface RejectedTripletDetail {
+  readonly triplet: Triplet;
+  readonly rejection: RejectedTriplet;
+  /** The subject's class first, then the object's. */
+  readonly endpoints: readonly ClassifiedEndpoint[];
+}
+
 /** Triplets that survived enforcement, plus a report of those that did not. */
 export interface OntologyParseResult {
   readonly triplets: readonly Triplet[];
   readonly rejected: readonly RejectedTriplet[];
   /**
-   * Endpoints recovered from triplets the RELATIONSHIP cost, not the entities.
+   * The endpoints a rejected triplet named, as bare nodes.
    *
-   * Empty when no rejection was relationship-only. See
-   * {@link rescueEndpoints} for why these exist and why they are not the same
-   * thing as an admitted triplet.
+   * Present for EVERY rejection, including one whose fault was an undeclared entity
+   * type: that case used to keep nothing at all, deleting two named nodes for one bad
+   * label. The nodes are kept here and their class travels in
+   * {@link rejectedTriplets}, so this stays a plain node list for a caller that only
+   * wanted the names.
    */
   readonly rescued: readonly StandaloneEntity[];
+  /**
+   * The rejections above, paired with the rows they must produce.
+   *
+   * Separate from {@link rejected} because the two have different readers: that one is
+   * a count for an operator, while this is what a writer persists — the triplet for the
+   * relationship row, the verdict for that row's class, and both endpoints with their
+   * own classes.
+   */
+  readonly rejectedTriplets: readonly RejectedTripletDetail[];
 }
 
 /** Raised for every way an ontology declaration can be wrong. */
@@ -558,64 +626,68 @@ export function parseTripletsWithOntology(
   const triplets: Triplet[] = [];
   const rejected: RejectedTriplet[] = [];
   const rescued: StandaloneEntity[] = [];
+  const rejectedTriplets: RejectedTripletDetail[] = [];
   for (const triplet of parseTriplets(argumentsJson)) {
     const rejection = rejectTriplet(triplet, ontology);
     if (rejection === undefined) {
       triplets.push(triplet);
-    } else {
-      rejected.push(rejection);
-      rescued.push(...rescueEndpoints(triplet, rejection));
+      continue;
     }
+    rejected.push(rejection);
+    const endpoints = classifyEndpoints(triplet, rejection, ontology);
+    rejectedTriplets.push({ triplet, rejection, endpoints });
+    // Projected down to the plain node shape on purpose: `rescued` keeps both the
+    // meaning and the shape it had, so a caller that only wanted the names is
+    // untouched and the classes travel in `rejectedTriplets` alone.
+    rescued.push(...endpoints.map(({ name, type }) => ({ name, type })));
   }
-  return { triplets, rejected, rescued };
+  return { triplets, rejected, rescued, rejectedTriplets };
 }
 
 /**
- * Whether a rejection was caused by the relationship rather than an endpoint.
+ * Decides the class of each endpoint of a rejected triplet.
  *
- * The distinction decides whether the triplet's nodes survive. A rejection that
- * names an entity type means the model produced something the ontology does not
- * have at all, so there is nothing to keep. A rejection that names only the
- * relation means both endpoints were declared and real — only the verb misfired.
- */
-function rejectionSparksEndpoints(reason: RejectionReason): boolean {
-  return reason !== "UNKNOWN_ENTITY_TYPE";
-}
-
-/**
- * Keeps the endpoints of a triplet whose only fault was the relationship.
+ * ## Why the entity-type reason is graded per endpoint
  *
- * ## Why this exists
+ * Every other reason leaves both endpoints intact: the verb was undeclared, or the pair
+ * was impossible, but each type on its own is one the ontology declares, so the nodes
+ * are kept as admitted nodes with no edge.
  *
- * Nodes used to exist only as admitted triplet endpoints, so a rejected triplet
- * took both its entities with it. Measured: `[Acme EMPLOYS Ada]` plus
- * `[Globex PARTNERS_WITH Initech]` left `Globex` and `Initech` as no rows at all,
- * even though the document named both and the ontology declares `COMPANY`. A
- * single unrecognised verb silently deleted two real entities.
+ * An undeclared entity type is different — the model produced a label the ontology does
+ * not have — and the old answer was to keep NOTHING: measured, `[Globex PARTNERS_WITH
+ * Initech]` kept both nodes while `[Acme ALIEN_CONSTRUCT EMPLOYS Ada]` kept neither,
+ * purely because of which check fired. Under two classes that asymmetry is gone: the
+ * node that carries the refused type is kept, marked `rejected`, with that type and that
+ * reason retained.
  *
- * Recovering them makes the cost of a bad relation what it should be: the EDGE is
- * lost, and the nodes remain. That matters most for exactly the case that
- * produces these rejections — a model reaching for a verb phrase nobody declared.
+ * The allowlist is consulted for BOTH endpoints rather than copying the verdict the
+ * classifier named, because both endpoints can be undeclared while the record carries
+ * one reason; copying it across would store an undeclared type as if the ontology had
+ * admitted it.
  *
- * ## What they are not
- *
- * They are not admitted triplets, so they carry no evidence of a relationship
- * between them: the graph gains two nodes and no edge. They are also not a
- * judgement that the pair belongs together — it does not. The recovery is purely
- * "this name was in the document and its type is declared".
- *
- * @param triplet - The triplet that was rejected.
+ * @param triplet - The rejected triplet.
  * @param rejection - Why it was rejected.
- * @returns Both endpoints as standalone entities, or nothing.
+ * @param ontology - The declaration being enforced; only its allowlist is read.
+ * @returns The subject's class first, then the object's.
  */
-function rescueEndpoints(
+function classifyEndpoints(
   triplet: Triplet,
   rejection: RejectedTriplet,
-): readonly StandaloneEntity[] {
-  if (!rejectionSparksEndpoints(rejection.reason)) return [];
+  ontology: Ontology,
+): readonly ClassifiedEndpoint[] {
+  if (rejection.reason !== "UNKNOWN_ENTITY_TYPE") {
+    return [
+      { name: triplet.subjectName, type: triplet.subjectType, verdict: "accepted" },
+      { name: triplet.objectName, type: triplet.objectType, verdict: "accepted" },
+    ];
+  }
+  const classify = (name: string, type: string): ClassifiedEndpoint =>
+    isEntityTypeAllowed(ontology, type, ontology.entityTypes)
+      ? { name, type, verdict: "accepted" }
+      : { name, type, verdict: "rejected", reason: "UNKNOWN_ENTITY_TYPE" };
   return [
-    { name: triplet.subjectName, type: triplet.subjectType },
-    { name: triplet.objectName, type: triplet.objectType },
+    classify(triplet.subjectName, triplet.subjectType),
+    classify(triplet.objectName, triplet.objectType),
   ];
 }
 

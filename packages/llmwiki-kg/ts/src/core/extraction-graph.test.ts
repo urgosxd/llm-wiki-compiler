@@ -341,7 +341,7 @@ describe("extractGraphFromChunks", () => {
     expect(result.mangledChunks).toBe(1);
   });
 
-  it("counts an out-of-ontology type without touching the rejection path", async () => {
+  it("counts an out-of-ontology type and still stores the refused triplet as rejected", async () => {
     // `gateway` is the harness default, so `strict` is off and the schema's
     // `enum` is advisory: the model's non-compliance reaches this process
     // untouched. The count makes that visible, and the triplet must STILL travel
@@ -355,10 +355,31 @@ describe("extractGraphFromChunks", () => {
     expect(rejection?.reason).toBe("UNKNOWN_ENTITY_TYPE");
     expect(rejection?.subject).toBe("Gateway");
     expect(rejection?.offendingType).toBe("PRODUCT");
-    // Nothing was admitted, so nothing was written: the triplet was rejected,
-    // not silently kept.
-    expect(result.entities).toEqual([]);
-    expect(result.relationships).toEqual([]);
+    // What the rejection path now produces. "Nothing was admitted, so nothing was
+    // written" was true of the epoch this feature ends: the refused endpoint is now a
+    // row carrying its class, its reason and the refused type, its ADMITTED sibling is
+    // a row carrying the class alone, and the edge is stored as rejected. The accepted
+    // half is asserted beside it, so this flip cannot hide an accepted-set regression.
+    expect(result.entities).toEqual([
+      expect.objectContaining({
+        name: "Gateway",
+        type: "PRODUCT",
+        ontologyVerdict: "rejected",
+        ontologyRejectionReason: "UNKNOWN_ENTITY_TYPE",
+        ontologyOffendingType: "PRODUCT",
+      }),
+      expect.objectContaining({ name: "Ada", type: "PERSON", ontologyVerdict: "accepted" }),
+    ]);
+    expect(result.entities[1]?.ontologyRejectionReason).toBeUndefined();
+    expect(result.entities[1]?.ontologyOffendingType).toBeUndefined();
+    expect(result.relationships).toEqual([
+      expect.objectContaining({
+        fromEntityName: "Gateway",
+        toEntityName: "Ada",
+        ontologyVerdict: "rejected",
+        ontologyRejectionReason: "UNKNOWN_ENTITY_TYPE",
+      }),
+    ]);
   });
 
   it("counts nothing when the provider enforces the schema itself", async () => {

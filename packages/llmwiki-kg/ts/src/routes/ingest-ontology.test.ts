@@ -322,7 +322,21 @@ describe.skipIf(skipReason !== false)("ingest respects a Stack's ontology", () =
     const chunks = [chunk(0, BODY)];
     setToolResponse([{ triplets: [BAD_ENTITY] }]);
     const strict = await extractGraphFromChunks(chunks, "w2ex-stack", validateOntology(DECLARATION));
-    expect(strict.entities).toEqual([]);
+    // What "strict" now decides is the CLASS, not whether the row exists: the refused
+    // candidate is stored marked rejected with the type it proposed, the endpoint that
+    // carries no fault is stored accepted, and the edge is stored rejected. The accepted
+    // half is asserted beside it so this flip cannot hide an accepted-set regression.
+    expect(strict.entities).toEqual([
+      expect.objectContaining({
+        name: "Vex",
+        type: "ALIEN_CONSTRUCT",
+        ontologyVerdict: "rejected",
+        ontologyRejectionReason: "UNKNOWN_ENTITY_TYPE",
+        ontologyOffendingType: "ALIEN_CONSTRUCT",
+      }),
+      expect.objectContaining({ name: "Nobody", type: "PERSON", ontologyVerdict: "accepted" }),
+    ]);
+    expect(strict.entities[1]?.ontologyRejectionReason).toBeUndefined();
     expect(strict.rejected?.[0]?.reason).toBe("UNKNOWN_ENTITY_TYPE");
 
     setToolResponse([{ triplets: [BAD_ENTITY] }]);

@@ -61,8 +61,11 @@ import {
 import {
   admitStandaloneEntities,
   parseTripletsWithOntology,
+  type ClassifiedEndpoint,
   type Ontology,
+  type OntologyClassification,
   type RejectedTriplet,
+  type RejectedTripletDetail,
 } from "./ontology.js";
 import {
   OpenAdmissionError,
@@ -80,7 +83,7 @@ import {
 } from "./extraction-types.js";
 
 /** The result for a document that produced no chunks. */
-function emptyResult(): ExtractionResult {
+function emptyResult(): ExtractionOutcome {
   return {
     entities: [],
     relationships: [],
@@ -120,7 +123,27 @@ export interface OpenExtractionReport {
 }
 
 /** What {@link extractGraphFromChunks} returns: the oracle's result plus an open run's report. */
-export type ExtractionOutcome = ExtractionResult & OpenExtractionReport;
+export interface ExtractionOutcome
+  extends Omit<ExtractionResult, "entities" | "relationships">,
+    OpenExtractionReport {
+  readonly entities: ClassifiedEntity[];
+  readonly relationships: ClassifiedRelationship[];
+}
+
+/**
+ * An extracted node plus the ontology class its row must carry.
+ *
+ * Every entity this module produces carries one, including the ones nothing is wrong
+ * with. That is deliberate and not ceremony: the column is `not null default
+ * 'accepted'`, so a node whose class was never decided would be stored as accepted by
+ * omission — the shape a reader could not tell from a real admission.
+ */
+export interface ClassifiedEntity extends ExtractedEntity, OntologyClassification {}
+
+/** An extracted edge plus the ontology class its row must carry. */
+export interface ClassifiedRelationship
+  extends ExtractedRelationship,
+    OntologyClassification {}
 
 /** How one extraction run is asked: which contract, and how much one chunk may cost. */
 export interface ExtractionOptions extends TripletBudgetOptions {
@@ -141,13 +164,15 @@ interface ChunkOutput {
   readonly rejected: readonly RejectedTriplet[];
   readonly standalone: readonly StandaloneEntity[];
   /**
-   * Endpoints of triplets whose only fault was the relationship.
+   * The rejected triplets of this chunk, paired with the rows they must produce.
    *
-   * Kept apart from `standalone` because the two arrive from different places —
-   * the model's `entities` array versus a rejected triplet — and because the
-   * audit report counts them separately.
+   * Empty on the open contract, which refuses nothing for the declaration's sake, and
+   * empty on a run without an ontology. Present so the fold can write what the verdict
+   * decided instead of counting it and discarding it (S1). The endpoints of these
+   * triplets travel inside them, each with its own class, so there is no second channel
+   * for the same nodes that could disagree with this one.
    */
-  readonly rescued: readonly StandaloneEntity[];
+  readonly rejectedDetails: readonly RejectedTripletDetail[];
   /**
    * Type positions the returned payload put outside the schema's `enum`s.
    *
@@ -190,7 +215,7 @@ function emptyOutput(failure?: unknown): ChunkOutput {
     triplets: [],
     rejected: [],
     standalone: [],
-    rescued: [],
+    rejectedDetails: [],
     // A chunk that never got an answer is a failure, not a mangled shape.
     shapeMangled: false,
     // And not a schema violation either: there is no payload to judge.
@@ -234,14 +259,19 @@ async function chunkTriplets(
         triplets: parseTriplets(argumentsJson),
         rejected: [],
         standalone,
-        rescued: [],
+        rejectedDetails: [],
         shapeMangled,
         schemaViolations,
       };
     }
+    const parsed = parseTripletsWithOntology(argumentsJson, ontology);
     return {
-      ...parseTripletsWithOntology(argumentsJson, ontology),
+      triplets: parsed.triplets,
+      rejected: parsed.rejected,
       standalone,
+      // The triplets travel on so their EDGE becomes a row too, and their endpoints'
+      // classes travel with them.
+      rejectedDetails: parsed.rejectedTriplets,
       shapeMangled,
       schemaViolations,
     };
@@ -295,8 +325,10 @@ async function openChunkTriplets(
       // The declaration turned nothing away: what it does not name is reported in
       // `open.outsideCatalog` as KEPT.
       rejected: [],
-      standalone: admitted.entities,
-      rescued: admitted.rescued,
+      // The rescued endpoints of the open contract were never in a rejected triplet:
+      // the scan refused them for structure, and the declaration admitted the rest.
+      standalone: [...admitted.entities, ...admitted.rescued],
+      rejectedDetails: [],
       shapeMangled: isShapeMangled(argumentsJson),
       schemaViolations: 0,
       open: {
@@ -351,52 +383,100 @@ function standaloneFor(
 }
 
 /**
- * Folds one endpoint into the entity map.
+ * The row-level class of one endpoint, named the way the three columns are.
  *
- * Both endpoints of a triplet become entities; the oracle does the same, which is
- * why `entities_extracted` counts nodes, not triplet subjects.
+ * The single place an endpoint's verdict becomes a row's verdict, so the two tables
+ * cannot be fed by two different conventions: `rejected` always carries its reason and
+ * the refused type, because a rejected row without a reason is refused by the
+ * `ontology_rejection_reason_requires_rejected` CHECK and a refused type left off the
+ * row would reduce the reason to a boolean.
+ *
+ * @param endpoint - One endpoint with the class the ontology gave it.
+ * @returns The class to store, ready to spread onto the row.
+ */
+function classificationOf(endpoint: ClassifiedEndpoint): OntologyClassification {
+  return endpoint.verdict === "accepted"
+    ? { ontologyVerdict: "accepted" }
+    : {
+        ontologyVerdict: "rejected",
+        ontologyRejectionReason: endpoint.reason,
+        ontologyOffendingType: endpoint.type,
+      };
+}
+
+/**
+ * Folds one endpoint into the entity map, with the class its row must carry.
+ *
+ * Both endpoints of a triplet become entities; the oracle does the same, which is why
+ * `entities_extracted` counts nodes, not triplet subjects. A rejected triplet's
+ * endpoints arrive here too, and they are the reason the class is a required argument:
+ * an endpoint whose class was never decided would reach the column's own default and be
+ * stored as accepted, which is exactly the mistake a reader could not detect.
+ *
+ * ## A name the ontology admitted is not downgraded
+ *
+ * One name can be mentioned many times in a document, and only some of those mentions
+ * may be at fault. An admitted mention therefore WINS: it supplies the declared type and
+ * repairs a rejected row, while a rejected mention never overwrites an accepted one.
+ * The reason is deleted with the verdict, not left beside it — the equivalence CHECK
+ * refuses a reason on an accepted row.
  */
 function absorbEndpoint(
-  entityMap: Map<string, ExtractedEntity>,
-  name: string,
-  type: string,
+  entityMap: Map<string, ClassifiedEntity>,
+  endpoint: ClassifiedEndpoint,
   chunkIndex: number,
 ): void {
-  const key = name.trim().toLowerCase();
+  const key = endpoint.name.trim().toLowerCase();
   const existing = entityMap.get(key);
   if (existing === undefined) {
     entityMap.set(key, {
-      name,
-      type,
+      name: endpoint.name,
+      type: endpoint.type,
       description: "",
       confidence: EXTRACTED_CONFIDENCE,
       sourceChunkIndices: [chunkIndex],
+      ...classificationOf(endpoint),
     });
     return;
   }
   if (EXTRACTED_CONFIDENCE > existing.confidence) {
     existing.description = "";
     existing.confidence = EXTRACTED_CONFIDENCE;
-    existing.type = type;
+    existing.type = endpoint.type;
+  }
+  if (existing.ontologyVerdict === "rejected" && endpoint.verdict === "accepted") {
+    existing.type = endpoint.type;
+    existing.ontologyVerdict = "accepted";
+    delete existing.ontologyRejectionReason;
+    delete existing.ontologyOffendingType;
   }
   existing.sourceChunkIndices.push(chunkIndex);
 }
 
-/** Folds both endpoints of one triplet into the entity map. */
+/** Folds both endpoints of an admitted triplet into the entity map. */
 function absorbEndpoints(
-  entityMap: Map<string, ExtractedEntity>,
+  entityMap: Map<string, ClassifiedEntity>,
   triplet: Triplet,
   chunkIndex: number,
 ): void {
-  absorbEndpoint(entityMap, triplet.subjectName, triplet.subjectType, chunkIndex);
-  absorbEndpoint(entityMap, triplet.objectName, triplet.objectType, chunkIndex);
+  absorbEndpoint(
+    entityMap,
+    { name: triplet.subjectName, type: triplet.subjectType, verdict: "accepted" },
+    chunkIndex,
+  );
+  absorbEndpoint(
+    entityMap,
+    { name: triplet.objectName, type: triplet.objectType, verdict: "accepted" },
+    chunkIndex,
+  );
 }
 
-/** One triplet as an extracted relationship. */
+/** One triplet as an extracted relationship, carrying its class. */
 function tripletRelationship(
   triplet: Triplet,
   chunkIndex: number,
-): ExtractedRelationship {
+  classification: OntologyClassification,
+): ClassifiedRelationship {
   return {
     fromEntityName: triplet.subjectName,
     toEntityName: triplet.objectName,
@@ -410,6 +490,7 @@ function tripletRelationship(
     description: "",
     confidence: EXTRACTED_CONFIDENCE,
     sourceChunkIndices: [chunkIndex],
+    ...classification,
   };
 }
 
@@ -417,6 +498,8 @@ function tripletRelationship(
 function relationshipKey(relationship: ExtractedRelationship): string {
   // Keyed on the FOLDED label, deliberately: two spellings of one verb are one
   // relationship, and the merged entry keeps the first spelling's raw predicate.
+  // The class is NOT part of the key: `unique_edge_per_stack` admits one row per
+  // identity, so the two classes of a collision cannot both persist.
   return [
     relationship.fromEntityName.toLowerCase(),
     relationship.type.toLowerCase(),
@@ -426,9 +509,9 @@ function relationshipKey(relationship: ExtractedRelationship): string {
 
 /** Merges duplicate relationships, keeping the highest confidence per key. */
 function mergeRelationships(
-  relationships: readonly ExtractedRelationship[],
-): Map<string, ExtractedRelationship> {
-  const merged = new Map<string, ExtractedRelationship>();
+  relationships: readonly ClassifiedRelationship[],
+): Map<string, ClassifiedRelationship> {
+  const merged = new Map<string, ClassifiedRelationship>();
   for (const relationship of relationships) {
     const key = relationshipKey(relationship);
     const existing = merged.get(key);
@@ -454,8 +537,8 @@ function mergeRelationships(
  * keeps `extractGraphFromChunks` a readable end-to-end sequence.
  */
 interface ExtractionTally {
-  readonly entities: Map<string, ExtractedEntity>;
-  readonly relationships: ExtractedRelationship[];
+  readonly entities: Map<string, ClassifiedEntity>;
+  readonly relationships: ClassifiedRelationship[];
   readonly rejected: RejectedTriplet[];
   readonly failures: unknown[];
   /** Chunks that answered with no usable envelope, however many they were. */
@@ -488,10 +571,12 @@ function emptyTally(): ExtractionTally {
 /**
  * Folds one chunk's output into the running tally.
  *
- * Order matters twice here: triplet endpoints are absorbed before standalone
- * entities, so the type a relationship already constrains wins the dedupe; and
- * a rejected triplet's rescued endpoints join the entity map LAST, because they
- * must contribute a node without ever contributing an edge.
+ * Order matters three times here: triplet endpoints are absorbed before standalone
+ * entities, so the type a relationship already constrains wins the dedupe; the open
+ * contract's rescued endpoints follow the entities they came beside, as they always
+ * did; and a rejected triplet is folded LAST, so when the same name or the same edge
+ * identity is both admitted and refused within one chunk, the admitted record reaches
+ * the merge first.
  *
  * @param tally - The run so far; mutated in place.
  * @param batch - What one chunk contributed.
@@ -511,7 +596,9 @@ function foldBatch(tally: ExtractionTally, batch: ChunkOutput, chunkIndex: numbe
   tally.rejected.push(...batch.rejected);
   for (const triplet of batch.triplets) {
     absorbEndpoints(tally.entities, triplet, chunkIndex);
-    tally.relationships.push(tripletRelationship(triplet, chunkIndex));
+    tally.relationships.push(
+      tripletRelationship(triplet, chunkIndex, { ontologyVerdict: "accepted" }),
+    );
   }
   // A standalone entity is absorbed by name, so a node the model reported in
   // both shapes stays one row. The triplet endpoints were absorbed first and
@@ -519,13 +606,27 @@ function foldBatch(tally: ExtractionTally, batch: ChunkOutput, chunkIndex: numbe
   // which it never does here — so the triplet's type wins, and it is the one a
   // relationship already constrains.
   for (const entity of batch.standalone) {
-    absorbEndpoint(tally.entities, entity.name, entity.type, chunkIndex);
+    absorbEndpoint(
+      tally.entities,
+      { name: entity.name, type: entity.type, verdict: "accepted" },
+      chunkIndex,
+    );
   }
-  // Endpoints of relationship-only rejections. Both types were already checked
-  // by the ontology, so nothing here needs filtering again; what they must NOT
-  // do is produce a relationship, which is why they join the entity map only.
-  for (const entity of batch.rescued) {
-    absorbEndpoint(tally.entities, entity.name, entity.type, chunkIndex);
+  // A triplet the ontology refused used to stop at this line: the count grew and the
+  // rows never existed. Under two classes it is written like any other — both endpoints
+  // with their own classes, and the EDGE with the verdict and the specific reason — and
+  // it is folded LAST so an admitted mention of the same name or identity is seen first.
+  for (const detail of batch.rejectedDetails) {
+    for (const endpoint of detail.endpoints) {
+      absorbEndpoint(tally.entities, endpoint, chunkIndex);
+    }
+    tally.relationships.push(
+      tripletRelationship(detail.triplet, chunkIndex, {
+        ontologyVerdict: "rejected",
+        ontologyRejectionReason: detail.rejection.reason,
+        ontologyOffendingType: detail.rejection.offendingType,
+      }),
+    );
   }
 }
 
