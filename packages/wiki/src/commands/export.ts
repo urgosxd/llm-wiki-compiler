@@ -260,14 +260,17 @@ function resolveTargets(rawTarget: string | undefined): ExportTarget[] {
  * Pure in-memory entry point — collects pages and returns the export document
  * object without writing any files or emitting console output.
  * @param root - Absolute path to the project root directory.
- * @param options - Optional export options (e.g. `projectId`).
+ * @param options - Optional export options (e.g. `projectId`, `env`). `options.env`
+ *   decides which Stack the pages are read from; it defaults to the ambient
+ *   environment so every existing caller is unchanged.
  * @returns The JsonExportDocument object ready for programmatic consumption.
  */
 export async function exportJson(
   root: string,
   options: ExportJsonOptions = {},
 ): Promise<JsonExportDocument> {
-  const pages = await withRawPageSource(root, process.env, (source) => collectExportPages(root, source, process.env));
+  const env = options.env ?? process.env;
+  const pages = await withRawPageSource(root, env, (source) => collectExportPages(root, source, env));
   const warnings = await collectExportWarnings(root);
   // Reconstruct build options from ONLY the public knob so a forged `warnings`
   // on the caller's object can never reach the document; the pipeline-computed

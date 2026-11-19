@@ -8,13 +8,18 @@
  * keeps it honest is parity against the real one. That parity is frozen here as two
  * literal arrays produced by `vitest related` at commit
  * a12fd91f1fe850e77b46a0698cec29ae22e188fa: 6 files for
- * `packages/wiki/src/index.ts`, and 27 for that file plus
+ * `packages/wiki/src/index.ts`, and 28 for that file plus
  * `packages/wiki/src/sdk/compiler-composition.ts`.
  *
- * THE PAIR ORACLE WAS LAST RE-FROZEN AT 27 BY `test/sdk/okf-export-env.test.ts` AND
+ * THE PAIR ORACLE WAS LAST RE-FROZEN AT 28 BY `test/sdk/export-json-env.test.ts`.
+ * That suite drives `createWiki({ root, env }).exportJson()` through the SDK facade, so
+ * it reaches both oracle inputs the way the entries below are reached; the LIVE
+ * `vitest related` on this tree returns these 28 files and no other entry moved.
+ *
+ * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 27 BY `test/sdk/okf-export-env.test.ts` AND
  * `test/sdk/okf-import-env.test.ts`. Both drive `createWiki({ root, env }).exportOkf()`
  * and `.importOkf()` through the SDK facade, so they reach both oracle inputs the way
- * the entries below are reached; the LIVE `vitest related` on this tree returns these
+ * the entries below are reached; the LIVE `vitest related` on this tree returned those
  * 27 files and no other entry moved.
  *
  * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 25 BY `test/sdk/context-pack-env.test.ts`.
@@ -51,7 +56,7 @@
  *
  * THE DEPTH CONTRAST IS LOAD-BEARING. `transformRequest` records only a module's
  * own imports, so a single pass yields depth-1 closures and stops. The pair of
- * inputs selects 27 files while the single input selects 6 — those are the two
+ * inputs selects 28 files while the single input selects 6 — those are the two
  * frozen oracles below, i.e. the selections the real `vitest related` returned for
  * those inputs, not counts this file derives from the crawl it is testing. A
  * regression back to one pass cannot reach the second number, which is what the
@@ -95,7 +100,7 @@ const SINGLE_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
 ];
 
-/** Oracle input two, and the exactly-27 selection `vitest related` returned for it. */
+/** Oracle input two, and the exactly-28 selection `vitest related` returned for it. */
 const PAIR_SOURCES: readonly string[] = [
   "packages/wiki/src/index.ts",
   "packages/wiki/src/sdk/compiler-composition.ts",
@@ -114,6 +119,7 @@ const PAIR_TESTS: readonly string[] = [
   "test/sdk/context-pack-env.test.ts",
   "test/sdk/core-composition.test.ts",
   "test/sdk/create-wiki-root.test.ts",
+  "test/sdk/export-json-env.test.ts",
   "test/sdk/facade-env-threading.test.ts",
   "test/sdk/facade-lint-unreachable-db.test.ts",
   "test/sdk/facade.test.ts",

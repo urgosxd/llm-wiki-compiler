@@ -229,7 +229,14 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         }),
       ),
 
-    exportJson: (opts = {}) => runQuiet(() => exportJson(root, opts)),
+    // `env` is forwarded for the reason `lint` states. This door is the one that also
+    // needed a FIELD: `exportJson` (`commands/export.ts`) hardcoded
+    // `withRawPageSource(root, process.env, …)`, so no argument from here could reach
+    // it. `ExportJsonOptions.env` is optional and defaults to the ambient environment,
+    // which leaves every existing caller of the type unchanged. Dropping the forward
+    // made a handle bound to Stack B export the AMBIENT Stack's pages as JSON --
+    // another tenant's corpus in a well-formed document.
+    exportJson: (opts = {}) => runQuiet(() => exportJson(root, { ...opts, env })),
 
     // "full" mode calls the LLM judge; "fast" mode is credential-free.
     runEval: ({ mode, record = false }) =>

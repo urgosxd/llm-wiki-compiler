@@ -81,6 +81,14 @@ export interface ExportJsonOptions {
    * regex; throws if invalid so a malformed value never reaches disk.
    */
   projectId?: string;
+  /**
+   * Where the export collects its pages from. `env` defaults to the ambient
+   * environment so every existing caller is unchanged; a Stack-scoped caller
+   * passes the one its argument named. It reaches the page source
+   * (`withRawPageSource`) and the freshness snapshot
+   * (`collectExportPages`), both of which resolve a Stack from it.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**

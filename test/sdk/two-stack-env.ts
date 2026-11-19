@@ -135,3 +135,20 @@ export async function handleOnBoundStack(two: TwoStacks): Promise<Wiki> {
   bindProcessTo(two.ambient);
   return createWiki({ root: two.root, env: two.bound.env() });
 }
+
+/**
+ * Open a case as the documented DEFAULT: a handle that names NO environment.
+ *
+ * `CreateWikiOptions.env` is optional and omitting it addresses the AMBIENT Stack, which
+ * is the contract this pair of proofs must leave exactly as it was. Opening the default
+ * case through one helper is also what keeps the PRESERVE case of every door's suite a
+ * statement about that door instead of a second copy of the same three lines.
+ *
+ * @param two - The pair, released by the calling suite.
+ * @returns A `createWiki` handle with no `env`, i.e. bound to `two.ambient`.
+ */
+export function handleOnAmbientStack(two: TwoStacks): Wiki {
+  requireReachable(two);
+  bindProcessTo(two.ambient);
+  return createWiki({ root: two.root });
+}
