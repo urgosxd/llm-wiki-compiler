@@ -23,6 +23,7 @@ import { collectRawWikiPages, extractWikilinkSlugs, extractWikilinkTargets } fro
 import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import type { RawWikiPage } from "../wiki/collect.js";
 import { extractClaimCitations, slugify } from "../utils/markdown.js";
+import { parseQualifiedPageId } from "../utils/page-id.js";
 import type { DefaultViewerPage, PageId, ViewerPage, ViewerPageId, ViewerWarning } from "./types.js";
 import type { PageDirectory } from "../export/types.js";
 import type { EntityPage } from "../profile/types.js";
@@ -58,20 +59,48 @@ export async function collectViewerPages(
 
 
 /**
- * Resolve a bare-slug wikilink target to a namespaced `PageId`. The
- * precedence rule (concepts before queries) matches the spec and is the
- * same logic used for both per-page outgoing links and `/api/index` link
- * resolution; exporting it here keeps callers from re-implementing the
- * order and accidentally diverging.
+ * Resolve a wikilink target to a namespaced `PageId`. The precedence rule
+ * (concepts before queries) matches the spec and is the same logic used for both
+ * per-page outgoing links and `/api/index` link resolution; exporting it here
+ * keeps callers from re-implementing the order and accidentally diverging.
+ *
+ * `target` is a tokenizer-normalized wikilink target: either a bare slug or a
+ * qualified `<namespace>/<slug>` id. A qualified id resolves ONLY inside its own
+ * namespace (an explicit namespace is never second-guessed), while a bare slug
+ * keeps the original concepts-then-queries precedence.
  */
 export function resolveBareSlug(
+  target: string,
+  pages: ReadonlyArray<PageIndexEntry>,
+): PageId | null {
+  const qualified = parseQualifiedPageId(target);
+  if (!qualified) return resolveUnqualifiedSlug(target, pages);
+  return resolveQualifiedSlug(qualified.namespace, slugify(qualified.pagePart), pages);
+}
+
+/** Resolve a qualified id inside its own namespace, rejecting other namespaces. */
+function resolveQualifiedSlug(
+  namespace: string,
+  pagePartSlug: string,
+  pages: ReadonlyArray<PageIndexEntry>,
+): PageId | null {
+  // Typed entity pages are never bare-slug resolution targets either, so only
+  // the two DEFAULT namespaces are addressable here.
+  if (namespace !== "concepts" && namespace !== "queries") return null;
+  if (pagePartSlug.length === 0) return null;
+  const page = pages.find((p) => p.pageDirectory === namespace && matchesPageSlug(p, pagePartSlug));
+  return page ? defaultPageId(namespace, page) : null;
+}
+
+/** Resolve a bare slug using the concepts-then-queries, exact-then-alias order. */
+function resolveUnqualifiedSlug(
   slug: string,
   pages: ReadonlyArray<PageIndexEntry>,
 ): PageId | null {
   if (slug.length === 0) return null;
-  const concept = pages.find((p) => p.pageDirectory === "concepts" && p.slug === slug);
+  const concept = pages.find((p) => p.pageDirectory === "concepts" && matchesPageSlug(p, slug));
   if (concept) return defaultPageId("concepts", concept);
-  const query = pages.find((p) => p.pageDirectory === "queries" && p.slug === slug);
+  const query = pages.find((p) => p.pageDirectory === "queries" && matchesPageSlug(p, slug));
   if (query) return defaultPageId("queries", query);
   // Alias fallback: a page whose declared aliases slugify to this target. An
   // exact slug match always wins (above) so a real page is never shadowed by
@@ -81,6 +110,20 @@ export function resolveBareSlug(
   const queryAlias = pages.find((p) => p.pageDirectory === "queries" && hasAliasSlug(p, slug));
   if (queryAlias) return defaultPageId("queries", queryAlias);
   return null;
+}
+
+/**
+ * True when `page` is addressed by the tokenizer-normalized `target`.
+ *
+ * A page's `slug` is its RAW filename stem (`wiki/collect.ts` keeps it verbatim,
+ * deliberately), while a wikilink target is slugified, so BOTH sides are
+ * normalized here: a title-shaped stem (`7. Subdominios DDD`) is reachable by
+ * the slug a citation of it produces (`7-subdominios-ddd`). An already-slug
+ * stem matches on the first comparison, so slug-shaped pages resolve exactly as
+ * they did before.
+ */
+function matchesPageSlug(page: PageIndexEntry, target: string): boolean {
+  return page.slug === target || slugify(page.slug) === target;
 }
 
 /**

@@ -1,0 +1,158 @@
+/**
+ * Citation targets produced by the `query_wiki` answer path, driven end to end.
+ *
+ * WHAT THE SYSTEM DOES (every locator below was read while writing this file):
+ * - A page IS `(page_directory, slug)` — `packages/wiki/src/dimensions/wiki/schema.sql:71`
+ *   with `primary key (stack_id, page_directory, slug)` at `:106`.
+ * - `collectAnswerCitationIndex` mints the qualified identity `${pageDirectory}/${slug}`
+ *   at `packages/wiki/src/citations/answer-index.ts:36` from the RAW filename stem
+ *   (`:33`), so `concepts` + `test2` becomes the id `concepts/test2`.
+ * - The answering model is shown those qualified ids as grounding headers
+ *   (`packages/wiki/src/commands/query.ts:269`, `--- Page: ${pageId} ---`) and told to
+ *   cite with wikilinks (`:81`). The citation it emits for a page is therefore that
+ *   same qualified id, which is exactly the form reported in production.
+ * - `recognizedWikilinkTargets` normalizes every wikilink target before resolution
+ *   (`packages/wiki/src/wiki/wikilink-tokens.ts:53` -> `normalizeWikilinkTarget` at
+ *   `:69`), which keeps a qualified namespace and slugifies ONLY the page part:
+ *   `slugify` (`packages/wiki/src/utils/markdown.ts:69-77`) deletes `/` because `/`
+ *   matches `[^\p{L}\p{N}\s-]`, so slugifying the whole target would lose the
+ *   namespace entirely.
+ * - `classifyAnswerCitations` resolves that normalized target through
+ *   `packages/wiki/src/citations/answer-report.ts:20` -> `resolveBareSlug`
+ *   (`packages/wiki/src/viewer/collect.ts:72`), which honors a namespace on a
+ *   qualified target (`:82`) and compares BOTH sides of a bare slug after
+ *   normalization (`:125`), because the stored `slug` is the RAW filename stem.
+ *
+ * Every case below drives that production chain — real page files on disk, then
+ * `collectAnswerCitationIndex`, then `reportAnswerCitations`. No target string is
+ * hand-written: the cited form is taken from the identity the index itself minted,
+ * or from the page title the answer prompt asks the model to cite.
+ *
+ * The pinned invariant is a property, not three literals: a citation target returned
+ * by the answer path resolves to a page that exists in that stack.
+ */
+import MarkdownIt from "markdown-it";
+import { afterEach, describe, expect, it } from "vitest";
+import * as fs from "fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { collectAnswerCitationIndex } from "./answer-index.js";
+import { reportAnswerCitations } from "./answer-report.js";
+import type { RetainedCitationTarget } from "./answer-types.js";
+import { collectViewerPages } from "../viewer/collect.js";
+import { registerWikilink } from "../viewer/wikilink-rule.js";
+import type { ViewerPage } from "../viewer/types.js";
+
+const created: string[] = [];
+
+afterEach(async () => {
+  while (created.length > 0) await fs.rm(created.pop() as string, { recursive: true, force: true });
+});
+
+/** Write `stem` under `wiki/<directory>/` as a real page and return the project root. */
+async function stackWithPage(directory: "concepts" | "queries", stem: string): Promise<string> {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "answer-citation-targets-")));
+  created.push(root);
+  const file = path.join(root, "wiki", directory, `${stem}.md`);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `---\ntitle: "${stem}"\n---\n\nThe body of ${stem}.\n`);
+  return root;
+}
+
+/** The retained identity the production index minted for one page, or a readable failure. */
+async function retainedIdentity(root: string, directory: string, stem: string): Promise<RetainedCitationTarget> {
+  const index = await collectAnswerCitationIndex(root);
+  const entry = index.retained.find((candidate) => candidate.pageDirectory === directory && candidate.slug === stem);
+  if (!entry) {
+    throw new Error(`page ${directory}/${stem} is on disk but the citation index does not retain it: `
+      + JSON.stringify(index.retained));
+  }
+  return entry;
+}
+
+describe("a citation naming an existing page by its own qualified identity", () => {
+  it("reproduces the production `concepts` + `test2` malformed target", async () => {
+    const root = await stackWithPage("concepts", "test2");
+    const page = await retainedIdentity(root, "concepts", "test2");
+    // The cited form is the header the answer prompt shows this page: its qualified id.
+    const report = await reportAnswerCitations(root, `Grounded in [[${page.id}]].`);
+
+    expect(report.citations).toMatchObject([{ status: "resolved", pageId: "concepts/test2" }]);
+  });
+
+  it.each([
+    ["concepts", "test2"],
+    ["concepts", "rbac-por-oficina"],
+    ["concepts", "7-subdominios-ddd"],
+    ["queries", "rbac-por-oficina"],
+  ])("resolves %s/%s, which exists in the stack", async (directory, stem) => {
+    const root = await stackWithPage(directory as "concepts" | "queries", stem);
+    const page = await retainedIdentity(root, directory, stem);
+    const report = await reportAnswerCitations(root, `Grounded in [[${page.id}]].`);
+
+    expect(report.citations).toMatchObject([{ status: "resolved", pageId: page.id }]);
+  });
+});
+
+describe("a citation whose stored stem is not already a slug", () => {
+  // Page identity keeps the RAW filename stem (answer-index.ts:33), while the body
+  // target is slugified before resolution (wikilink-tokens.ts:52). A page authored or
+  // migrated with a title-shaped stem is therefore cited by its own title in a form
+  // that can never equal its stored identity. No `/` is involved in this case, which
+  // is what separates it from the separator loss above.
+  it.each([
+    ["concepts", "7. Subdominios DDD"],
+    ["concepts", "Raw Name"],
+  ])("resolves %s/%s cited by its own title", async (directory, stem) => {
+    const root = await stackWithPage(directory as "concepts" | "queries", stem);
+    const page = await retainedIdentity(root, directory, stem);
+    const report = await reportAnswerCitations(root, `Grounded in [[${stem}]].`);
+
+    expect(report.citations).toMatchObject([{ status: "resolved", pageId: page.id }]);
+  });
+});
+
+/**
+ * Render `body` through the viewer's production wikilink rule. `renderPageHtml`
+ * (`packages/wiki/src/viewer/render.ts:66`) registers exactly this rule over the
+ * snapshot's pages, so the parse/resolve/render chain under test is the rendered
+ * one, not a re-implementation of it.
+ */
+function renderBody(body: string, pages: ViewerPage[]): string {
+  const md = new MarkdownIt({ html: false, linkify: false, breaks: false });
+  registerWikilink(md, { pages });
+  return md.render(body);
+}
+
+describe("a body wikilink naming an existing page by its qualified identity", () => {
+  // The response body carries `[[concepts/test2]]` links while the citation list
+  // reports the same page as `conceptstest2` (the production asymmetry). Both go
+  // through the shared tokenizer and the shared resolver, so both must survive.
+  it("renders [[concepts/test2]] as a live anchor, not a missing link", async () => {
+    const root = await stackWithPage("concepts", "test2");
+    const page = await retainedIdentity(root, "concepts", "test2");
+    const html = renderBody(`Grounded in [[${page.id}]].`, await collectViewerPages(root));
+
+    expect(html).toContain('data-page-id="concepts/test2"');
+    expect(html).not.toContain("data-missing");
+  });
+
+  it("still renders a genuinely absent page as data-missing", async () => {
+    const root = await stackWithPage("concepts", "test2");
+    const html = renderBody("Grounded in [[concepts/ghost]].", await collectViewerPages(root));
+
+    expect(html).toContain('data-missing="true"');
+  });
+});
+
+describe("a citation naming an existing page by its bare slug", () => {
+  // PRESERVE: this is the resolution behavior the viewer and the report share today,
+  // and the prompt's `[[Page Title]]` form reaches it whenever the stem is a slug.
+  it.each(["test2", "rbac-por-oficina", "7-subdominios-ddd"])("keeps %s resolved", async (stem) => {
+    const root = await stackWithPage("concepts", stem);
+    const page = await retainedIdentity(root, "concepts", stem);
+    const report = await reportAnswerCitations(root, `Grounded in [[${stem}]].`);
+
+    expect(report.citations).toMatchObject([{ status: "resolved", pageId: page.id }]);
+  });
+});

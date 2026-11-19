@@ -9,6 +9,7 @@ import MarkdownIt from "markdown-it";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import type Token from "markdown-it/lib/token.mjs";
 import { slugify } from "../utils/markdown.js";
+import { parseQualifiedPageId, qualifiedPageId } from "../utils/page-id.js";
 import { shouldDeferInlineRule } from "../viewer/markdown-it-helpers.js";
 import { registerCitationTokens } from "./citation-tokens.js";
 
@@ -49,11 +50,26 @@ function parseWikilink(state: StateInline, silent: boolean): boolean {
   // Markdown convention: forbid newlines inside a single wikilink span.
   if (inner.includes("\n") || inner.includes(OPEN)) return false;
   const { rawTarget, display } = splitTargetAndAlias(inner);
-  const slug = slugify(rawTarget.trim());
+  const slug = normalizeWikilinkTarget(rawTarget.trim());
   const token = state.push("wikilink", "", 0);
   token.meta = { slug, display };
   state.pos = closeAt + 2;
   return true;
+}
+
+/**
+ * Normalize one raw wikilink target into the form resolution matches against.
+ *
+ * A qualified `<namespace>/<page-part>` target keeps its namespace VERBATIM and
+ * slugifies only the page part: `slugify` deletes `/` (`utils/markdown.ts` keeps
+ * `[^\p{L}\p{N}\s-]` out), so slugifying the whole target would fold
+ * `concepts/test2` into the unusable `conceptstest2`. Any target without a
+ * valid qualified id is slugified whole, exactly as before.
+ */
+function normalizeWikilinkTarget(rawTarget: string): string {
+  const qualified = parseQualifiedPageId(rawTarget);
+  if (!qualified) return slugify(rawTarget);
+  return qualifiedPageId(qualified.namespace, slugify(qualified.pagePart));
 }
 
 /** Split the inside-brackets text into a raw target and a display label. */
