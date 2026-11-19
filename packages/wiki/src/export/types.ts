@@ -89,7 +89,10 @@ export interface ExportPage {
    * reason above.
    */
   updatedAt?: string;
-  /** Slugs of other pages this page links to via [[wikilinks]]. */
+  /**
+   * Normalized `[[wikilink]]` targets the body links to: a bare slug, or a
+   * qualified `<namespace>/<slug>` id when the body named one that way.
+   */
   links: string[];
   /** Full markdown body (without frontmatter). */
   body: string;

@@ -33,7 +33,7 @@ wiki/
 
 <CardGroup cols={3}>
   <Card title="wiki/concepts/" icon="file-lines">
-    One Markdown file per compiled concept. Each file has YAML frontmatter with title, summary, kind, sources, timestamps, and optional epistemic metadata. The file body contains prose paragraphs with `^[source.md]` citation markers and `[[wikilinks]]` to related concepts.
+    One Markdown file per compiled concept. Each file has YAML frontmatter with title, summary, kind, sources, timestamps, and optional epistemic metadata. The file body contains prose paragraphs with `^[source.md]` citation markers and `[[wikilinks]]` to related concepts - a bare slug (`[[knowledge-compilation]]`) or a qualified page id (`[[concepts/knowledge-compilation]]`), both of which resolve to the same page. A page's frontmatter title is not a link target; declare an extra `aliases` entry if you want to link by another name.
   </Card>
   <Card title="wiki/queries/" icon="magnifying-glass">
     Saved answers from `query(..., { save: true })`. Query pages are full wiki pages and participate in retrieval - future queries use them as context, compounding the wiki's usefulness over time.

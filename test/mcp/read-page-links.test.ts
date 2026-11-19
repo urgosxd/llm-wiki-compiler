@@ -34,6 +34,11 @@ import { pageLinkRefs } from "../../packages/wiki/src/pages/read.js";
 
 /** Body text of the page that LINKS out; long enough to stay clear of `empty-page`. */
 const ALPHA_TEXT = "Alpha body text, which points at [[beta|Beta label]] for the rest.";
+/**
+ * Body text of a page that cites a target by its qualified page id — the form the
+ * answer prompt tells the model to use — instead of a bare slug.
+ */
+const QUALIFIED_TEXT = "Qualified body text, which points at [[concepts/beta]] for the rest.";
 /** Body text of the page the link NAMES, distinctive so a wrong page cannot pass. */
 const BETA_TEXT = "Beta body text, reachable only by following the link.";
 /** Body text of a page that names no other page. */
@@ -55,6 +60,10 @@ const ALPHA_PAGE: SeedPage = { slug: "alpha", title: "Alpha", summary: "alpha su
 const BETA_PAGE: SeedPage = { slug: "beta", title: "Beta", summary: "beta summary", text: BETA_TEXT };
 /** A page that names no other page. */
 const LONE_PAGE: SeedPage = { slug: "lone", title: "Lone", summary: "lone summary", text: LONE_TEXT };
+/** A page whose only outgoing link names its target by QUALIFIED page id. */
+const QUALIFIED_PAGE: SeedPage = {
+  slug: "qualified", title: "Qualified", summary: "qualified summary", text: QUALIFIED_TEXT,
+};
 
 /**
  * A page body the compiler could have written, with frontmatter title and summary.
@@ -130,6 +139,21 @@ async function seedAndRead(
   return readPage(readSlug);
 }
 
+/**
+ * Follow a reported link slug the way a client does, and prove it reaches the target.
+ *
+ * Both the bare-slug and the qualified-id case assert the same promise — the wire
+ * `slug` is followable — so the follow lives here once instead of twice.
+ *
+ * @param links - The decoded `links` array of the page that was read.
+ */
+async function expectFollowsToBeta(links: Array<{ slug: string }>): Promise<void> {
+  const target = await readPage(links[0].slug);
+  expect(target.slug).toBe("beta");
+  expect(target.title).toBe("Beta");
+  expect(target.body).toContain(BETA_TEXT);
+}
+
 describe("read_page outgoing links — traversal", () => {
   it("reports the seeded edge with its target slug and the label the page used", async () => {
     const payload = await seedAndRead("alpha", ALPHA_PAGE, BETA_PAGE);
@@ -144,13 +168,9 @@ describe("read_page outgoing links — traversal", () => {
     const alpha = await seedAndRead("alpha", ALPHA_PAGE, BETA_PAGE);
     if (alpha === null) return;
 
-    const target = await readPage(alpha.links[0].slug);
-
     // A link an agent cannot follow is not the feature: the slug it was handed must
     // resolve to the page the label named.
-    expect(target.slug).toBe("beta");
-    expect(target.title).toBe("Beta");
-    expect(target.body).toContain(BETA_TEXT);
+    await expectFollowsToBeta(alpha.links);
   }, 60_000);
 });
 
@@ -211,4 +231,27 @@ describe("pageLinkRefs", () => {
       { slug: "beta", label: "First" },
     ]);
   });
+
+  it("projects a qualified target to the bare slug read_page accepts", () => {
+    // `read_page` addresses pages by BARE slug (its schema says "without the .md
+    // extension" and it looks the slug up with no qualified-id parsing), so the wire
+    // field cannot carry `concepts/beta` and still be "passable straight back to
+    // read_page". The projection happens here, and the label keeps what the page wrote.
+    expect(pageLinkRefs("See [[concepts/beta]] and [[queries/gamma|Gamma label]].")).toEqual([
+      { slug: "beta", label: "concepts/beta" },
+      { slug: "gamma", label: "Gamma label" },
+    ]);
+  });
+});
+
+describe("read_page links that name their target by qualified page id", () => {
+  it("hands back a bare slug that read_page can follow, as its description promises", async () => {
+    const payload = await seedAndRead("qualified", QUALIFIED_PAGE, BETA_PAGE);
+    if (payload === null) return;
+
+    // The documented promise is that `links[].slug` can be passed straight back.
+    expect(payload.links).toEqual([{ slug: "beta", label: "concepts/beta" }]);
+
+    await expectFollowsToBeta(payload.links);
+  }, 60_000);
 });

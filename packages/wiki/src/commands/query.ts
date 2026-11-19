@@ -78,7 +78,7 @@ export async function loadSelectedPages(root: string, slugs: string[]): Promise<
 /** Base system prompt body. The output-language directive is appended at call time. */
 const ANSWER_SYSTEM_PROMPT_BASE =
   "Answer the question using ONLY the wiki content provided. " +
-  "Cite specific pages using [[Page Title]] wikilinks. " +
+  "Cite the exact page id from each `--- Page: <page id> ---` header, as a [[concepts/example-page]] wikilink. " +
   "If the wiki doesn't contain enough information, say so.";
 
 /**

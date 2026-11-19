@@ -212,7 +212,7 @@ describe("a qualified citation is confined to its own namespace", () => {
 
 describe("a citation naming an existing page by its bare slug", () => {
   // PRESERVE: this is the resolution behavior the viewer and the report share today,
-  // and the prompt's `[[Page Title]]` form reaches it whenever the stem is a slug.
+  // and a citation the model writes as a bare slug still reaches it.
   it.each(["test2", "rbac-por-oficina", "7-subdominios-ddd"])("keeps %s resolved", async (stem) => {
     const root = await stackWithPage("concepts", stem);
     const page = await retainedIdentity(root, "concepts", stem);

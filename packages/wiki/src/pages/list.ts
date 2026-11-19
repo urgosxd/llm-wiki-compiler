@@ -46,7 +46,10 @@ export interface Page {
   title: string;
   summary: string;
   tags: string[];
-  /** Slugs of pages linked via `[[wikilinks]]` in the body. */
+  /**
+   * Normalized `[[wikilink]]` targets the body links to: a bare slug, or a
+   * qualified `<namespace>/<slug>` id when the body named one that way.
+   */
   links: string[];
   createdAt?: string;
   updatedAt?: string;

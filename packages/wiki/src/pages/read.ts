@@ -14,6 +14,7 @@ import path from "path";
 import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import { extractWikilinkTargets } from "../wiki/collect.js";
+import { slugFromPageId } from "../utils/page-id.js";
 
 /** Directories searched (in priority order) when resolving a page slug. */
 const PAGE_DIRS = [CONCEPTS_DIR, QUERIES_DIR];
@@ -34,9 +35,12 @@ export interface PageLinkRef {
    * Target page slug, directly usable as `read_page`'s `slug` argument.
    *
    * Slugified from the wikilink target, so it matches the on-disk filename rather
-   * than the human-typed link text. It is not validated against the corpus: a
-   * wikilink to a page that was never written yields a slug that `read_page`
-   * reports as not found, which is the same answer the body itself gives.
+   * than the human-typed link text. A QUALIFIED target (`[[concepts/beta]]`) is
+   * projected to its bare page part, because `read_page` addresses pages by bare
+   * slug and never parses a namespace; the namespace is therefore not carried here.
+   * It is not validated against the corpus: a wikilink to a page that was never
+   * written yields a slug that `read_page` reports as not found, which is the same
+   * answer the body itself gives.
    */
   slug: string;
   /**
@@ -59,7 +63,8 @@ export interface PageLinkRef {
  */
 export function pageLinkRefs(body: string): PageLinkRef[] {
   return extractWikilinkTargets(body).map((target) => ({
-    slug: target.slug,
+    // Projected to the bare page part: `read_page` takes a slug, not a page id.
+    slug: slugFromPageId(target.slug) || target.slug,
     label: target.display,
   }));
 }
