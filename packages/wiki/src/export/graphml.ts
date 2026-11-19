@@ -10,6 +10,12 @@
  */
 
 import type { ExportPage } from "./types.js";
+import {
+  buildExportLinkIndex,
+  exportPageId,
+  resolveExportPageLinks,
+  type ExportLinkIndex,
+} from "./link-targets.js";
 
 /** XML special characters that must be escaped in attribute values and text. */
 const XML_ESCAPES: Record<string, string> = {
@@ -47,12 +53,19 @@ function optionalData(key: string, value: string | undefined): string[] {
   return value ? [`    <data key="${key}">${escapeXml(value)}</data>`] : [];
 }
 
-/** Serialise one ExportPage as a GraphML <node> element. */
+/**
+ * Serialise one ExportPage as a GraphML <node> element.
+ *
+ * The node id is the QUALIFIED page id (`concepts/retrieval`), not the bare slug: a
+ * page is `(page_directory, slug)` (`packages/wiki/src/dimensions/wiki/schema.sql:106`),
+ * so two pages in different directories may share a stem and a bare-slug id would
+ * make the document declare the same node twice.
+ */
 function pageToNode(page: ExportPage): string {
   const tags = page.tags.join(", ");
   const sources = page.sources.join(", ");
   return [
-    `  <node id="${escapeXml(page.slug)}">`,
+    `  <node id="${escapeXml(exportPageId(page))}">`,
     `    <data key="title">${escapeXml(page.title)}</data>`,
     `    <data key="summary">${escapeXml(page.summary)}</data>`,
     `    <data key="tags">${escapeXml(tags)}</data>`,
@@ -63,27 +76,31 @@ function pageToNode(page: ExportPage): string {
   ].join("\n");
 }
 
-/** Build all <edge> elements for a single source page's outgoing links. */
-function pageToEdges(page: ExportPage, knownSlugs: Set<string>): string[] {
-  return page.links
-    .filter((slug) => knownSlugs.has(slug))
-    .map(
-      (slug) =>
-        `  <edge source="${escapeXml(page.slug)}" target="${escapeXml(slug)}"/>`,
-    );
+/**
+ * Build all <edge> elements for a single source page's outgoing links.
+ *
+ * The targets are resolved to PAGES first ({@link resolveExportPageLinks}) and only
+ * then rendered as ids, because a link target is a page reference: comparing it to a
+ * set of bare slugs dropped every `[[concepts/y]]` edge silently.
+ */
+function pageToEdges(page: ExportPage, linkIndex: ExportLinkIndex): string[] {
+  return resolveExportPageLinks(linkIndex, page).map(
+    (target) =>
+      `  <edge source="${escapeXml(exportPageId(page))}" target="${escapeXml(exportPageId(target))}"/>`,
+  );
 }
 
 /**
  * Build the GraphML document from a list of export pages.
- * Only edges whose target slug exists in the page set are included so the
+ * Only edges whose target resolves to a page in the export are included so the
  * graph contains no dangling references.
  * @param pages - Sorted array of export pages.
  * @returns GraphML XML string.
  */
 export function buildGraphml(pages: ExportPage[]): string {
-  const knownSlugs = new Set(pages.map((p) => p.slug));
+  const linkIndex = buildExportLinkIndex(pages);
   const nodes = pages.map(pageToNode).join("\n");
-  const edges = pages.flatMap((p) => pageToEdges(p, knownSlugs)).join("\n");
+  const edges = pages.flatMap((p) => pageToEdges(p, linkIndex)).join("\n");
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',

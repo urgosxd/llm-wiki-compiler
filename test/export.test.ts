@@ -183,13 +183,17 @@ describe("buildGraphml", () => {
 
   it("includes a node for each page", () => {
     const out = buildGraphml([SAMPLE_PAGE, SECOND_PAGE]);
-    expect(out).toContain('id="quantum-entanglement"');
-    expect(out).toContain('id="superposition"');
+    // Node ids are the QUALIFIED page id (`<pageDirectory>/<slug>`): a page is
+    // `(page_directory, slug)`, so a bare slug is not unique across directories.
+    expect(out).toContain('id="concepts/quantum-entanglement"');
+    expect(out).toContain('id="concepts/superposition"');
   });
 
   it("includes edges for wikilinks between known pages", () => {
     const out = buildGraphml([SAMPLE_PAGE, SECOND_PAGE]);
-    expect(out).toContain('source="quantum-entanglement" target="superposition"');
+    expect(out).toContain(
+      'source="concepts/quantum-entanglement" target="concepts/superposition"',
+    );
   });
 
   it("omits edges to unknown pages", () => {
@@ -308,6 +312,6 @@ describe("runExport", () => {
   it("graphml artifact contains an edge from alpha to beta", async () => {
     await runExport(root, { target: "graphml" });
     const content = await readFile(path.join(root, "dist/exports/wiki.graphml"), "utf-8");
-    expect(content).toContain('source="alpha" target="beta"');
+    expect(content).toContain('source="concepts/alpha" target="concepts/beta"');
   });
 });
