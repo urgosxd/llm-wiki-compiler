@@ -10,7 +10,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { AKS_API_KEY, AKS_BASE_URL, authHeaders } from "./config.js";
-import { formatContextResponse, formatEntitiesResponse, formatTraverseResponse } from "./format.js";
+import {
+  UNRESOLVED_CLASS_DISCLOSURE,
+  formatContextResponse,
+  formatEntitiesResponse,
+  formatTraverseResponse,
+  refusedEdgeKey,
+} from "./format.js";
+import type { RefusedEdges } from "./format.js";
 import type { QueryValue } from "./query-string.js";
 import { encodeQuery, floatParam, intParam, rawParam } from "./query-string.js";
 import { asArray, asRecord, asText, requireField } from "./narrow.js";
@@ -269,6 +276,101 @@ async function graphRead(
   return textResult(format(await response.json()));
 }
 
+
+/**
+ * The ontology-refused edges of one Stack, resolved from this package's own projection.
+ *
+ * ## Why this request exists
+ *
+ * The MCP server formats AKS JSON, and AKS 0.1.0 closes a relationship
+ * (`SCHEMA.json:562`: `additionalProperties: false`, and no `properties` map), so an
+ * edge's class cannot travel in the answer being formatted. It travels instead in
+ * `GET /domain/kg/stacks/:id/graph` — an extension of this package with no AKS
+ * counterpart — and this resolves it once per call so the rendered bullet can still say
+ * which edges the ontology refused.
+ *
+ * ## When it cannot be resolved
+ *
+ * A failed or truncated read is reported as `resolved: false` and the answer carries
+ * {@link UNRESOLVED_CLASS_DISCLOSURE}. An unmarked edge must never be presented as a
+ * verified one, and a silent failure here would do exactly that.
+ *
+ * @param deps - Transport and credentials.
+ * @param stackId - The Stack the graph belongs to.
+ * @returns The refused-edge keys, and whether the index is complete.
+ */
+async function refuseEdgeIndex(
+  deps: ResolvedDependencies,
+  stackId: string,
+): Promise<{ readonly refused: RefusedEdges; readonly resolved: boolean }> {
+  const response = await deps.fetchImpl(
+    `${deps.baseUrl}/domain/kg/stacks/${stackId}/graph?limit=2000`,
+    {
+      method: "GET",
+      headers: authHeaders(deps.apiKey),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (response.status !== 200) {
+    return { refused: new Map(), resolved: false };
+  }
+  return refusedEdgesOf(await response.json());
+}
+
+/** Node id -> label, which is how a graph edge is matched against a rendered line. */
+function nodeLabels(body: Record<string, unknown>): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const node of asArray(body["nodes"])) {
+    const n = asRecord(node);
+    if (n !== null && typeof n["id"] === "string") {
+      labels.set(n["id"], asText(n["label"]));
+    }
+  }
+  return labels;
+}
+
+/** Every refused edge of a graph projection, keyed by endpoint labels and type. */
+function refusedEdgeKeys(body: Record<string, unknown>, labels: Map<string, string>): RefusedEdges {
+  const refused = new Map<string, string | null>();
+  for (const edge of asArray(body["edges"])) {
+    const e = asRecord(edge);
+    if (e === null) continue;
+    const block = asRecord(e["ontology_classification"]);
+    if (block === null || block["verdict"] !== "rejected") continue;
+    const from = labels.get(asText(e["source"]));
+    const to = labels.get(asText(e["target"]));
+    if (from === undefined || to === undefined) continue;
+    const reason = block["reason"];
+    refused.set(
+      refusedEdgeKey(from, asText(e["type"]), to),
+      typeof reason === "string" ? reason : null,
+    );
+  }
+  return refused;
+}
+
+/**
+ * The refused edges a graph projection names, and whether the projection was complete.
+ *
+ * A non-object body is reported as unresolved rather than as "nothing refused", and a
+ * `truncated: true` projection is reported the same way: an edge the projection did not
+ * carry cannot be cleared, and saying so is what stops an unread edge from being
+ * rendered as a verified one.
+ */
+function refusedEdgesOf(payload: unknown): {
+  readonly refused: RefusedEdges;
+  readonly resolved: boolean;
+} {
+  const body = asRecord(payload);
+  if (body === null) {
+    return { refused: new Map(), resolved: false };
+  }
+  return {
+    refused: refusedEdgeKeys(body, nodeLabels(body)),
+    resolved: body["truncated"] !== true,
+  };
+}
+
 export async function queryStack(
   args: Record<string, unknown>,
   deps: ResolvedDependencies,
@@ -309,7 +411,35 @@ export async function queryStack(
     return textResult(await statusErrorText(response));
   }
 
-  return textResult(formatContextResponse(await response.json()));
+  return contextAnswer(deps, asText(stack.stackId), await response.json(), args);
+}
+
+/**
+ * One context answer as text, with its edges classified when that can change a line.
+ *
+ * `accepted_only: true` already removed every refused edge upstream, so there is nothing
+ * to classify on that path and the second read is not paid for. Otherwise the refused
+ * edges are resolved from {@link refuseEdgeIndex} and the answer discloses when that
+ * resolution was incomplete.
+ *
+ * @param deps - Transport and credentials.
+ * @param stackId - The Stack the answer came from, already validated.
+ * @param answer - The parsed `POST /aks/v1/context` body.
+ * @param args - The tool arguments, read only for `accepted_only`.
+ * @returns The tool result.
+ */
+async function contextAnswer(
+  deps: ResolvedDependencies,
+  stackId: string,
+  answer: unknown,
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
+  if (args["accepted_only"] === true) {
+    return textResult(formatContextResponse(answer));
+  }
+  const index = await refuseEdgeIndex(deps, stackId);
+  const text = formatContextResponse(answer, index.refused);
+  return textResult(index.resolved ? text : `${text}\n\n${UNRESOLVED_CLASS_DISCLOSURE}`);
 }
 
 export async function traverseStack(

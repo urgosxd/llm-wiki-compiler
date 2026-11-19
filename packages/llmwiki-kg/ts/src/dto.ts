@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { OntologyError } from "./core/ontology.js";
+import type { RejectionReason } from "./core/ontology.js";
+import type { OntologyVerdict } from "./schema.js";
 import { toStoredOntology } from "./core/stack_ontology.js";
 import {
   pydanticBoolean,
@@ -397,6 +399,79 @@ export const DocumentResponse = z.object({
 // AKS endpoint models (Group 4)
 // ============================================================
 
+/**
+ * The two classes a graph row carries: the ontology either accepted it or refused it.
+ *
+ * Mirrors the `ontology_verdict` CHECK constraint (`accepted` | `rejected`). The
+ * vocabulary is stated here, in the module that puts it on the wire, and a compile-time
+ * `satisfies` keeps it identical to the stored column's own union instead of letting a
+ * third spelling appear.
+ */
+const ONTOLOGY_VERDICTS = ["accepted", "rejected"] as const satisfies readonly OntologyVerdict[];
+
+/**
+ * The four reasons the classifier records for a refused triplet.
+ *
+ * Each element is a member of the stored reason union (`RejectionReason` in
+ * `core/ontology.ts`), so a rename there fails this declaration's typecheck rather
+ * than silently disagreeing with the rows. The reason is the SPECIFIC one — never the
+ * word `rejected`, which is the class and not a reason.
+ */
+export const ONTOLOGY_REJECTION_REASONS = [
+  "UNKNOWN_ENTITY_TYPE",
+  "UNKNOWN_RELATIONSHIP_TYPE",
+  "SUBJECT_TYPE_NOT_IN_DOMAIN",
+  "OBJECT_TYPE_NOT_IN_RANGE",
+] as const satisfies readonly RejectionReason[];
+
+/**
+ * The ontology's verdict on one entity or edge, as every response carries it.
+ *
+ * ## Why this is a declared DTO field and not a mapper's extra key
+ *
+ * Zod objects here strip unknown keys (see the file header), so a classification a
+ * mapper sets on a plain object and does not DECLARE on the model never reaches a
+ * client and raises no error anywhere. Declaring it is what makes the marker exist.
+ *
+ * ## Why it is an object and not a bare flag
+ *
+ * A reader in a hurry gets three answers from one place: the class (`verdict`), the
+ * classifier's own reason (`reason`, `null` when accepted), and the type the ontology
+ * refused (`offending_type`, `null` when accepted). A boolean would collapse the
+ * reason and the offending type, and S1 requires both to survive onto the wire.
+ *
+ * ## Why `accepted` carries it too
+ *
+ * An accepted item states `accepted` explicitly rather than omitting the block: a
+ * reader must be able to tell WHICH class it holds without knowing that absence means
+ * accepted. That is also why every real projection states the value instead of leaning
+ * on the model's default, which exists only so a hand-built fixture still parses.
+ *
+ * ## Why it is not `properties.kg_classification`
+ *
+ * `kg_classification` is the read projection of `classification_state` — the CATALOG
+ * axis — and it is a different question from the ontology's verdict. Reusing or
+ * extending that block would report one axis as the other.
+ */
+export const AKSClassification = z.object({
+  verdict: z.enum(ONTOLOGY_VERDICTS),
+  reason: z.enum(ONTOLOGY_REJECTION_REASONS).nullable(),
+  offending_type: pydanticString().nullable(),
+});
+
+/**
+ * What an item with nothing decided against it carries.
+ *
+ * The wire block for an accepted row, and the DTO's own default: a hand-built payload
+ * (a test fixture, an older caller's body) still parses, while every projection in
+ * this package states the value explicitly and a test pins it per surface.
+ */
+export const ACCEPTED_CLASSIFICATION: AKSClassificationDto = Object.freeze({
+  verdict: "accepted",
+  reason: null,
+  offending_type: null,
+});
+
 /** Traceability block on every entity and relationship. */
 export const AKSSource = z.object({
   document_id: pydanticUuid().nullable().default(null),
@@ -408,7 +483,20 @@ export const AKSSource = z.object({
   pipeline: pydanticString().nullable().default(null),
 });
 
-/** An entity as it appears in AKS Bundle exports and query responses. */
+/**
+ * An entity as it appears in AKS Bundle exports and query responses.
+ *
+ * ## Why an entity's ontology class does NOT live here
+ *
+ * AKS 0.1.0 closes this object: `SCHEMA.json:484` sets `additionalProperties: false`
+ * for `AKSEntity`, so a field added at this level is not an extension of the standard
+ * but a different payload, and the vendored schema's own prose binds `/aks/v1/entities`
+ * to this type (`CONFORMANCE.md:30`) as well as the context response
+ * (`README.md:397-398`). The class travels instead inside {@link AKSEntity.properties},
+ * the ONE map the specification leaves open — `SCHEMA.json:520` gives it
+ * `additionalProperties: true` — under the reserved key
+ * `ontology_classification`, beside `kg_classification` and never merged into it.
+ */
 export const AKSEntity = z.object({
   id: pydanticUuid(),
   name: pydanticString(),
@@ -421,7 +509,21 @@ export const AKSEntity = z.object({
   source: AKSSource,
 });
 
-/** A relationship as it appears in AKS Bundle exports and query responses. */
+/**
+ * A relationship as it appears in AKS Bundle exports and query responses.
+ *
+ * ## Edge marking is impossible on this object, and that is a contract fact
+ *
+ * `SCHEMA.json:562` sets `additionalProperties: false` for `AKSRelationship`, and
+ * `AKSRelationship` has NO `properties` map — unlike `AKSEntity`, whose `properties`
+ * the specification leaves open. So there is no lawful channel for an edge's ontology
+ * class on any AKS JSON surface: neither a declared field nor a reserved property.
+ *
+ * Where an edge's class IS published: the rendered MCP text, the page prompt, the
+ * stack-graph edge projection, and the traverse step model — none of which is an AKS
+ * `$defs` type. See `odd/findings/aks-spec-conformance.md` for the finding and the
+ * proposed 0.2.0 fields.
+ */
 export const AKSRelationship = z.object({
   id: pydanticUuid(),
   from_entity_id: pydanticUuid(),
@@ -466,13 +568,21 @@ export const AKSContextResponse = z.object({
   source_type: z.literal(SOURCE_TYPES).default("compiled"),
 });
 
-/** One step in a traversal result. */
+/**
+ * One step in a traversal result.
+ *
+ * A step IS an edge, so it carries the same ontology block a relationship does: the
+ * walk crosses refused edges by default, and a step that does not say which class it
+ * crossed hides exactly the thing a reader needs. Declared last, as on the two models
+ * above, so no existing key moves.
+ */
 export const AKSTraverseStep = z.object({
   from_entity: pydanticString(),
   relationship: pydanticString(),
   to_entity: pydanticString(),
   depth: pydanticInt(),
   confidence: pydanticFloat(),
+  ontology_classification: AKSClassification.default(() => ACCEPTED_CLASSIFICATION),
 });
 
 /** Response from `GET /aks/v1/traverse`. */
@@ -645,6 +755,7 @@ export type StackUpdateDto = z.infer<typeof StackUpdate>;
 export type StackResponseDto = z.infer<typeof StackResponse>;
 export type DocumentResponseDto = z.infer<typeof DocumentResponse>;
 export type AKSSourceDto = z.infer<typeof AKSSource>;
+export type AKSClassificationDto = z.infer<typeof AKSClassification>;
 export type AKSEntityDto = z.infer<typeof AKSEntity>;
 export type AKSRelationshipDto = z.infer<typeof AKSRelationship>;
 export type AKSContextRequestDto = z.infer<typeof AKSContextRequest>;

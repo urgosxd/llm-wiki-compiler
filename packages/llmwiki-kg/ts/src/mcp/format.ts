@@ -25,6 +25,83 @@ function contextDescription(entity: Record<string, unknown>): string {
   return typeof raw === "string" && raw.length > 0 ? raw : NO_DESCRIPTION;
 }
 
+/**
+ * An edge the ontology refused, keyed by what a rendered line actually knows.
+ *
+ * The MCP server formats AKS JSON, and AKS closes a relationship
+ * (`SCHEMA.json:562`, `additionalProperties: false`, no `properties` map), so the class
+ * of an edge is nowhere in the payload being formatted. It is resolved from this
+ * package's own graph projection instead — `GET /domain/kg/stacks/:id/graph`, whose
+ * edges DO carry the class — and handed here as a set of
+ * `from label | type | to label` keys.
+ *
+ * Empty by construction when the caller could not resolve the index, so a formatter
+ * never invents a marker and never fails because one is missing.
+ */
+export type RefusedEdges = ReadonlyMap<string, string | null>;
+
+/** The key one rendered edge line matches against. */
+export function refusedEdgeKey(from: string, type: string, to: string): string {
+  return `${from}\u0000${type}\u0000${to}`;
+}
+
+/** The disclosure appended when the ontology classes could not be resolved. */
+export const UNRESOLVED_CLASS_DISCLOSURE =
+  "Note: the ontology classification of these relationships could not be resolved, so a" +
+  " refused edge may appear here unmarked. Call the tool again, or use accepted_only: true" +
+  " to exclude refused items.";
+
+/**
+ * The marker a REFUSED edge carries in rendered text, or nothing at all.
+ *
+ * The class must be visible at a glance, so it is not a trailing key a reader has to
+ * know to look for: it sits inside the edge's own type bracket, where the reader is
+ * already looking. The rendering is additive — an accepted edge produces the exact line
+ * it produced before this marker existed.
+ */
+function refusedEdgeMarker(from: string, type: string, to: string, refused: RefusedEdges): string {
+  const key = refusedEdgeKey(from, type, to);
+  if (!refused.has(key)) return "";
+  const reason = refused.get(key) ?? null;
+  // The reason is stated when it is known: "refused" without it does not tell a reader
+  // whether the verb or one of the endpoints was the problem.
+  return reason === null ? " (REJECTED by ontology)" : ` (REJECTED by ontology: ${reason})`;
+}
+
+/**
+ * The marker a REFUSED traversal step carries, or nothing at all.
+ *
+ * A step carries its class inline (`ontology_classification`), because a traversal step
+ * is not an AKS `$defs` type — the vendored schema defines no step object — so no
+ * external index is needed here, unlike on a relationship.
+ */
+function refusedStepMarker(step: Record<string, unknown>): string {
+  const block = asRecord(step["ontology_classification"]);
+  if (block === null || block["verdict"] !== "rejected") return "";
+  const reason = block["reason"];
+  return typeof reason === "string" && reason.length > 0
+    ? ` (REJECTED by ontology: ${reason})`
+    : " (REJECTED by ontology)";
+}
+
+/**
+ * The marker a REFUSED entity carries, or nothing at all.
+ *
+ * An entity's class DOES travel on the wire, inside `properties`
+ * (`SCHEMA.json:520` leaves that map open) under the reserved
+ * `ontology_classification` key. Its absence means the ontology raised nothing against
+ * this entity, which is the same convention `kg_classification` follows.
+ */
+function refusedEntityMarker(entity: Record<string, unknown>): string {
+  const properties = asRecord(entity["properties"]);
+  const block = properties === null ? null : asRecord(properties["ontology_classification"]);
+  if (block === null || block["verdict"] !== "rejected") return "";
+  const reason = block["reason"];
+  return typeof reason === "string" && reason.length > 0
+    ? ` (REJECTED by ontology: ${reason})`
+    : " (REJECTED by ontology)";
+}
+
 /** Renders the "Relevant entities" block, or the not-found marker. */
 function entityLines(entities: readonly unknown[]): string[] {
   if (entities.length === 0) {
@@ -40,7 +117,7 @@ function entityLines(entities: readonly unknown[]): string[] {
     lines.push(
       `  • ${asText(requireField(e, "name"))} [${asText(
         requireField(e, "type"),
-      )}, conf ${formatFixed2(confidence)}]`,
+      )}${refusedEntityMarker(e)}, conf ${formatFixed2(confidence)}]`,
     );
     if (description !== NO_DESCRIPTION) {
       lines.push(`    ${description}`);
@@ -67,6 +144,7 @@ function entityNameMap(entities: readonly unknown[]): Map<string, string> {
 function relationshipLines(
   record: Record<string, unknown>,
   entities: readonly unknown[],
+  refused: RefusedEdges,
 ): string[] {
   const relationships = asArray(record["relationships"]);
   if (relationships.length === 0) {
@@ -82,13 +160,22 @@ function relationshipLines(
     const toId = asText(requireField(r, "to_entity_id"));
     const fromName = nameMap.get(fromId) ?? fromId;
     const toName = nameMap.get(toId) ?? toId;
-    lines.push(`  • ${fromName} —[${asText(requireField(r, "type"))}]→ ${toName}`);
+    const type = asText(requireField(r, "type"));
+    lines.push(
+      `  • ${fromName} —[${type}${refusedEdgeMarker(fromName, type, toName, refused)}]→ ${toName}`,
+    );
   }
   return lines;
 }
 
-/** Format `/aks/v1/context` output into a compact readable response. */
-export function formatContextResponse(data: unknown): string {
+/**
+ * Format `/aks/v1/context` output into a compact readable response.
+ *
+ * @param data - The AKS context answer.
+ * @param refused - Edges this package resolved as ontology-refused, from its own graph
+ *   projection. Empty means "nothing known", never "nothing refused".
+ */
+export function formatContextResponse(data: unknown, refused: RefusedEdges = new Map()): string {
   const record = asRecord(data);
   if (record === null) throw new Error("Context response is not an object");
 
@@ -99,12 +186,18 @@ export function formatContextResponse(data: unknown): string {
     `Reasoning: ${asText(requireField(record, "reasoning"))}`,
     "",
     ...entityLines(entities),
-    ...relationshipLines(record, entities),
+    ...relationshipLines(record, entities, refused),
   ];
 
   return lines.join("\n");
 }
-/** Format `/aks/v1/traverse` output. */
+/**
+ * Format `/aks/v1/traverse` output.
+ *
+ * A step carries its own class (`ontology_classification`), because a traversal step is
+ * not an AKS `$defs` type — the vendored schema defines no step object at all — so this
+ * surface needs no external index.
+ */
 export function formatTraverseResponse(data: unknown): string {
   const record = asRecord(data);
   if (record === null) throw new Error("Traverse response is not an object");
@@ -139,7 +232,7 @@ export function formatTraverseResponse(data: unknown): string {
     lines.push(
       `${indent}• ${asText(requireField(s, "from_entity"))} —[${asText(
         requireField(s, "relationship"),
-      )}]→ ${asText(requireField(s, "to_entity"))} (depth ${asText(depth)}, conf ${formatFixed2(
+      )}${refusedStepMarker(s)}]→ ${asText(requireField(s, "to_entity"))} (depth ${asText(depth)}, conf ${formatFixed2(
         asNumber(requireField(s, "confidence"), "confidence"),
       )})`,
     );
@@ -164,7 +257,9 @@ export function formatEntitiesResponse(data: unknown): string {
     lines.push(
       `• ${asText(requireField(e, "name"))} [${asText(
         requireField(e, "type"),
-      )}, conf ${formatFixed2(asNumber(requireField(e, "confidence"), "confidence"))}]${verifiedMarker}`,
+      )}${refusedEntityMarker(e)}, conf ${formatFixed2(
+        asNumber(requireField(e, "confidence"), "confidence"),
+      )}]${verifiedMarker}`,
     );
     const description = e["description"];
     if (typeof description === "string" && description.length > 0) {

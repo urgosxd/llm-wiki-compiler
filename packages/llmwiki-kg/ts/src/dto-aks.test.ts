@@ -101,6 +101,9 @@ describe("AKSContextRequest", () => {
       domain: null,
       max_entities: 8,
       include_relationships: true,
+      // Declared last on the request model, so the order a multi-field 422 reports its
+      // entries in is unchanged for every field the oracle already had.
+      accepted_only: false,
     });
   });
 

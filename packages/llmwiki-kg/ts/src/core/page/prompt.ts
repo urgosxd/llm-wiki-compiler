@@ -11,6 +11,7 @@ import { formatFixed2 } from "./fixed2.js";
 import type {
   EntityPageContext,
   PageDocumentRow,
+  PageEntityRow,
   PageRelationshipRow,
 } from "./context.js";
 
@@ -21,11 +22,31 @@ import type {
 /** Response budget for one page. `complete(prompt, max_tokens=2048)`. */
 export const PAGE_MAX_TOKENS = 2048;
 
+/**
+ * The marker a REFUSED item carries, or nothing at all.
+ *
+ * Additive by construction: an accepted edge renders exactly the line the oracle pinned,
+ * and only an edge the ontology refused changes shape. Trailing rather than inline
+ * because this is prose a model reads end to end, and the reason is stated so the model
+ * can say WHY the source's claim was not admitted instead of quietly omitting it.
+ */
+function refusedMarker(relationship: {
+  readonly ontology_verdict?: string | null;
+  readonly ontology_rejection_reason?: string | null;
+}): string {
+  if (relationship.ontology_verdict !== "rejected") return "";
+  const reason = relationship.ontology_rejection_reason;
+  return reason === null
+    ? " [REJECTED by the ontology]"
+    : ` [REJECTED by the ontology: ${reason}]`;
+}
+
 /** One outgoing edge, as the prompt renders it. */
 function outgoingLine(relationship: PageRelationshipRow): string {
   return (
     `  - This entity ${relationship.type}s ${relationship.other_name} ` +
-    `(${relationship.other_type}, confidence ${formatFixed2(Number(relationship.confidence))})`
+    `(${relationship.other_type}, confidence ${formatFixed2(Number(relationship.confidence))})` +
+    refusedMarker(relationship)
   );
 }
 
@@ -33,7 +54,8 @@ function outgoingLine(relationship: PageRelationshipRow): string {
 function incomingLine(relationship: PageRelationshipRow): string {
   return (
     `  - ${relationship.other_name} (${relationship.other_type}) ${relationship.type}s this entity ` +
-    `(confidence ${formatFixed2(Number(relationship.confidence))})`
+    `(confidence ${formatFixed2(Number(relationship.confidence))})` +
+    refusedMarker(relationship)
   );
 }
 
@@ -47,6 +69,23 @@ function relationshipLines(
     ...incoming.map(incomingLine),
   ];
   return lines.length === 0 ? "  (No relationships recorded)" : lines.join("\n");
+}
+
+/**
+ * The extra ENTITY line a refused entity carries, or nothing at all.
+ *
+ * An entity the ontology refused is still stored, and a page about it is still
+ * generated — the human's decision is "included, but marked". This is the marking: the
+ * model is told the item did not pass the ontology, so it does not present the refused
+ * type as a settled classification of the thing.
+ */
+function entityOntologyNote(entity: PageEntityRow): string {
+  if (entity.ontology_verdict !== "rejected") return "";
+  const reason = entity.ontology_rejection_reason ?? "no reason recorded";
+  const offending = entity.ontology_offending_type ?? entity.type;
+  return (
+    `\n  Ontology: REJECTED by the ontology (${reason}); refused type ${offending}`
+  );
 }
 
 /** The SOURCE DOCUMENTS block, or a marker when nothing contributed. */
@@ -70,6 +109,18 @@ function documentLines(documents: readonly PageDocumentRow[]): string {
  * The two placeholder branches are part of the contract as well:
  * `(No relationships recorded)` and `(No contributing documents)` are what the
  * model sees when the graph has nothing to offer.
+ *
+ * ## One deliberate, additive deviation: refused items are marked
+ *
+ * The oracle's text is reproduced byte for byte for everything it could produce. It
+ * could not produce a row the ontology refused — those rows did not exist then — so the
+ * marker is scoped to exactly that case and to nothing else: a refused edge gains a
+ * trailing `[REJECTED by the ontology: <reason>]`, and a refused entity gains one line
+ * after its description. Every accepted prompt is unchanged, character for character.
+ *
+ * The reason this deviation is worth making: without it the model is handed a claim the
+ * ontology did not admit, with nothing to tell it apart from an admitted one, and it
+ * writes that claim into a wiki page where it later reads as a fact.
  */
 export function buildPagePrompt(context: EntityPageContext): string {
   const { entity, outgoing, incoming, documents } = context;
@@ -84,7 +135,7 @@ ENTITY:
   Name: ${entity.name}
   Type: ${entity.type}
   Confidence: ${formatFixed2(Number(entity.confidence))}
-  Existing description: ${entity.description ?? "(none)"}
+  Existing description: ${entity.description ?? "(none)"}${entityOntologyNote(entity)}
 
 RELATIONSHIPS:
 ${relationshipText}

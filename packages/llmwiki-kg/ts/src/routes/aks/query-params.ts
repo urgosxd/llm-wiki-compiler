@@ -109,10 +109,19 @@ export const EntitiesQuery = z.object({
   accepted_only: pydanticBoolean().default(false),
 });
 
-/** Query schema for `GET /aks/v1/entities/{name}`. */
+/**
+ * Query schema for `GET /aks/v1/entities/{name}`.
+ *
+ * `accepted_only` is declared LAST for the reason every addition here is appended: the
+ * order in which a multi-parameter 422 reports its entries stays unchanged for every
+ * parameter the oracle already had. It is the same name, polarity and default as on
+ * every other graph surface, and it is parsed by the contract's own boolean primitive,
+ * so a value that cannot mean either boolean is refused rather than guessed.
+ */
 export const EntityQuery = z.object({
   stackId: pydanticUuid().nullable().default(null),
   domain: pydanticString().nullable().default(null),
+  accepted_only: pydanticBoolean().default(false),
 });
 
 /** Query schema for `GET /aks/v1/traverse`. */
@@ -134,6 +143,21 @@ export const ExportQuery = z.object({
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
   verified_only: pydanticBoolean().default(false),
   entity_type: pydanticString().nullable().default(null),
+  // Declared LAST, same name and same polarity (exclusion-ON) as on every other graph
+  // surface — but this is the ONE surface whose DEFAULT differs, and the exception is
+  // named here rather than inherited: `/aks/v1/export` is the only surface whose payload
+  // is validated against a vendored contract (AKS 0.1.0, `SCHEMA.json`), and that
+  // contract closes `AKSRelationship` (`:562`, `additionalProperties: false`, no
+  // `properties` map), so a refused edge cannot be marked on this surface at all.
+  // Returning both classes by default would therefore hand out unmarked refused edges to
+  // the consumer least able to notice. The default is therefore true: a bundle holds the
+  // accepted class unless the caller asks for everything.
+  //
+  // `false` opts into refused items, which arrive with no marker available on this
+  // surface. Because the bundle envelope is ALSO closed (`SCHEMA.json:19`), no response
+  // signal can announce that, so the ONLY channel is this written contract — here, in the
+  // route documentation, and in the tool description.
+  accepted_only: pydanticBoolean().default(true),
 });
 
 /**
@@ -151,7 +175,7 @@ export const ENTITIES_QUERY_KEYS = [
   "classification_state",
   "accepted_only",
 ] as const;
-export const ENTITY_QUERY_KEYS = ["stackId", "domain"] as const;
+export const ENTITY_QUERY_KEYS = ["stackId", "domain", "accepted_only"] as const;
 export const TRAVERSE_QUERY_KEYS = [
   "start",
   "stackId",
@@ -166,6 +190,7 @@ export const EXPORT_QUERY_KEYS = [
   "min_confidence",
   "verified_only",
   "entity_type",
+  "accepted_only",
 ] as const;
 
 // ---------------------------------------------------------------------------

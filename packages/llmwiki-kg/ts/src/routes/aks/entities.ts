@@ -100,6 +100,11 @@ const EntityNameParams = z.object({ name: pydanticString() });
  * documented total order picks (a classified row first, then the most confident,
  * then by id) and `properties.kg_classification.name_matches` reports how many rows
  * shared the name. The endpoint never silently guesses between them.
+ *
+ * `accepted_only` narrows the lookup to the accepted class. Naming an entity the
+ * ontology refused with `accepted_only=true` answers with this route's own not-found
+ * response — the same 404 and the same detail text an absent name gets — because the
+ * narrowed lookup finds nothing to pick. No new status semantics are introduced.
  */
 export async function getEntity(req: Request, res: Response, tx: Database): Promise<void> {
   const rawName = readQuery(req, ENTITY_QUERY_KEYS);
@@ -113,7 +118,13 @@ export async function getEntity(req: Request, res: Response, tx: Database): Prom
   // Express routed here; it exists so the value is narrowed without a cast.
   const name = EntityNameParams.parse({ name: req.params["name"] }).name;
 
-  const result = await readEntityByName(tx, query.data.stackId, query.data.domain, name);
+  const result = await readEntityByName(
+    tx,
+    query.data.stackId,
+    query.data.domain,
+    name,
+    query.data.accepted_only,
+  );
   if (!result.ok) {
     sendApiError(res, toApiError(result.error));
     return;

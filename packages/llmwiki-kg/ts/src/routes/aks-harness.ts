@@ -139,6 +139,9 @@ export const TRAVERSE_STEP_KEYS = [
   "to_entity",
   "depth",
   "confidence",
+  // A traversal step is not an AKS `$defs` type — the vendored schema defines no step
+  // object — so its class CAN travel here, and does.
+  "ontology_classification",
 ] as const;
 
 export const CONTEXT_KEYS = [

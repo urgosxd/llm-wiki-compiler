@@ -51,6 +51,22 @@ interface BundleContents {
 }
 
 /**
+ * The ontology-verdict predicate, or nothing at all for the wide default.
+ *
+ * Both bundle reads use this one fragment: the entity select and the relationship
+ * select filter the same column, so a caller who narrows receives a bundle whose
+ * entities AND edges are the accepted ones. Returning `sql.empty()` on the default is
+ * load-bearing — the statement a caller who never uses the flag runs is then
+ * byte-identical to the one this route ran before the flag existed.
+ *
+ * @param acceptedOnly - The caller's flag; absent and `false` are the same answer.
+ * @returns The conjunction to splice in, or an empty fragment.
+ */
+function verdictClause(acceptedOnly: boolean): ReturnType<typeof sql> {
+  return acceptedOnly ? sql`and ontology_verdict = 'accepted'` : sql.empty();
+}
+
+/**
  * Loads every row a bundle needs, in the Python order.
  *
  * The contributing-documents read takes the entity ids from the first read, so
@@ -67,9 +83,15 @@ async function loadBundleContents(
     filters.min_confidence,
     filters.verified_only,
     filters.entity_type,
+    filters.accepted_only,
   );
   const entityIds = entityRows.map((row) => row.id);
-  const relationshipRows = await loadExportRelationships(tx, stackId, entityIds);
+  const relationshipRows = await loadExportRelationships(
+    tx,
+    stackId,
+    entityIds,
+    filters.accepted_only,
+  );
   const documentRows = await loadExportDocuments(tx, stackId);
   const contributing = await fetchContributingDocuments(tx, entityIds);
   return { entityRows, relationshipRows, documentRows, contributing };
@@ -95,6 +117,18 @@ async function loadBundleContents(
  *
  * `compiled_at` is the request time, never a stored value: a bundle describes the
  * graph as it was when it was produced.
+ *
+ * ## The one surface whose `accepted_only` default is `true`
+ *
+ * A bundle is the only payload in this service validated against a vendored contract,
+ * and that contract closes `AKSRelationship` (`SCHEMA.json:562`,
+ * `additionalProperties: false`, no `properties` map), so an ontology-refused edge
+ * cannot be marked here at all. The default therefore returns the accepted class only,
+ * which also keeps the default bundle byte-identical to what this service emitted
+ * before ontology-refused rows existed. `accepted_only=false` opts into the refused
+ * rows, and they arrive unmarked: refuse-ability is not published on this surface
+ * because the envelope is closed too (`SCHEMA.json:19`), so the written contract is the
+ * only channel that can state it.
  */
 /**
  * Load the entities the export filter selects, with their classification columns.
@@ -116,6 +150,14 @@ async function loadBundleContents(
  * reduced number would let a client asking for `>= 0.5` receive an item displaying
  * `0.375`. Rows with no support judgement keep factor 1, so their selection is
  * unchanged.
+ *
+ * ## `accepted_only` is a class filter, never a score
+ *
+ * The ontology's verdict is its own axis: no numeric bound stands in for it, and no
+ * confidence value is touched by it. A refused entity is exported by default, carrying
+ * its class and its reason, and omitted only when the caller asks for accepted items
+ * alone — in which case the edges that ended at it go with it, because an exported edge
+ * never dangles.
  */
 async function loadExportEntities(
   tx: Database,
@@ -123,6 +165,7 @@ async function loadExportEntities(
   minConfidence: number,
   verifiedOnly: boolean,
   entityType: string | null,
+  acceptedOnly: boolean,
 ): Promise<ExportEntityRow[]> {
   const verifiedClause = verifiedOnly ? sql`and verified = true` : sql.empty();
   const typeClause = isFilterSet(entityType) ? sql`and type = ${entityType}` : sql.empty();
@@ -134,6 +177,7 @@ async function loadExportEntities(
       and ${aksConfidenceSql()} >= ${minConfidence}
       ${verifiedClause}
       ${typeClause}
+      ${verdictClause(acceptedOnly)}
     order by name, id
   `);
 }
@@ -151,6 +195,7 @@ async function loadExportRelationships(
   tx: Database,
   stackId: string,
   entityIds: readonly string[],
+  acceptedOnly: boolean,
 ): Promise<ExportRelationshipRow[]> {
   if (entityIds.length === 0) return [];
   return tx.execute<ExportRelationshipRow>(sql`
@@ -159,6 +204,7 @@ async function loadExportRelationships(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
+      ${verdictClause(acceptedOnly)}
     order by type, from_entity_id, to_entity_id
   `);
 }

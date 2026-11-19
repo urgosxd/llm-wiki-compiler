@@ -1,7 +1,8 @@
 # AKS spec conformance: where this package diverges, and where the spec is silent
 
 **Status:** open — two real divergences, one extension, two registered oracle
-departures, several unverified MUSTs
+departures, several unverified MUSTs, and one recorded NON-divergence (§3b: the ontology
+class, which complies and cannot be extended onto a relationship)
 **Reference:** `ts/oracle/aks-specification-v0.1.0/` (vendored, commit `bc82307`, spec `0.1.0`)
 **Why this exists:** the spec was vendored so protocol decisions can be cited
 instead of remembered. Reading it against the code surfaced two payloads this
@@ -258,6 +259,73 @@ honest status. Each needs its own test before anyone says "conformant".
 | Document quality audit run **before** ingestion (`README.md:517`, SHOULD) | This package's audit is written **after** extraction and reports ontology rejections — a different question. Both legitimate; not the same field's purpose. |
 
 ---
+
+---
+
+## 3b. NO DIVERGENCE: the ontology class, and why an edge cannot carry it
+
+**Status:** this change ADDS NO DIVERGENCE. It complies with AKS 0.1.0. The entry exists
+because the shape of what is possible here is decided by the contract, and a reader that
+does not know that will try to add the field again.
+
+### 5a. What was NOT added
+
+The ontology-rejected-edges feature needed to publish, per row, whether the ontology
+accepted or refused it, and why. The obvious shape — a declared `ontology_classification`
+object on `AKSEntity` and `AKSRelationship` — was implemented first and then REMOVED,
+because it is a contract violation rather than an extension:
+
+- `SCHEMA.json:484` — `$defs.AKSEntity.additionalProperties: false`
+- `SCHEMA.json:562` — `$defs.AKSRelationship.additionalProperties: false`
+- `SCHEMA.json:19` — the bundle envelope is closed too
+
+A field added under `additionalProperties: false` is not a deviation the schema can be
+taught to accept with an allowlist; it is a different payload. A conformance test that
+passes only because its deviation set grew has stopped being a conformance test.
+
+### 5b. The asymmetry, which is a CONTRACT FACT and not a validator gap
+
+`AKSEntity` has an open map and `AKSRelationship` does not:
+
+- `SCHEMA.json:520` — `properties` inside `AKSEntity` is
+  `"additionalProperties": true`, which is already why `properties.kg_classification` is
+  legal today.
+- `AKSRelationship` has NO `properties` map at all (its only keys are `id`,
+  `from_entity_id`, `to_entity_id`, `type`, `description`, `confidence`, `source`).
+
+Consequence, and it is the whole finding: **an entity's ontology class can be published
+inside `properties.ontology_classification`, and a relationship's cannot be published on
+any AKS JSON surface at all** — neither as a declared field nor as a reserved property.
+This is not a hole in our test suite. No test in this package validates
+`/aks/v1/context`, `/aks/v1/traverse`, `/aks/v1/entities` or the single-entity route
+against `SCHEMA.json` (only `src/routes/aks/export-conformance.test.ts` compiles it), and
+the field was removed ANYWAY, because the specification's own prose binds those endpoints
+to these types: `CONFORMANCE.md:30` requires `/aks/v1/entities` to return `AKSEntity`
+objects, and `README.md:397-398` writes the context response as
+`entities: [AKSEntity], relationships: [AKSRelationship]`.
+
+Where an edge's class IS published, because none of these is an AKS `$defs` type:
+the rendered MCP text, the page-generation prompt, `GET /domain/kg/stacks/:id/graph`
+(edges and nodes), and the traverse step model. `GET /aks/v1/export` defaults
+`accepted_only` to `true` precisely so a bundle consumer never receives an unmarked
+refused edge, and its bundle default is byte-identical to what this service emitted
+before refused rows existed.
+
+### 5c. Proposed for AKS 0.2.0 — NOT IMPLEMENTED, DOES NOT EXIST
+
+The correct fix belongs upstream, in the next version of the standard. Proposed: an
+optional `ontology_classification` object on `AKSRelationship` and `AKSEntity`, with the
+three fields this feature needs —
+
+- `verdict`: `"accepted" | "rejected"`
+- `reason`: one of `UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`,
+  `SUBJECT_TYPE_NOT_IN_DOMAIN`, `OBJECT_TYPE_NOT_IN_RANGE`, or `null`
+- `offending_type`: the refused type or verb, or `null`
+
+It is versioned `0.2.0` and it does not exist in 0.1.0. Nothing in this repository
+implements it, nothing validates against it, and `SCHEMA.json` in the vendored copy does
+not contain it. Until it is published upstream and re-vendored here, the asymmetries in
+5b are permanent properties of a conformant implementation.
 
 ## 4. What to do next, in order
 

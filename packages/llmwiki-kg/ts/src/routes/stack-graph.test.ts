@@ -41,10 +41,26 @@ const GRAPH_BASE = "/domain/kg/stacks";
 const GRAPH_KEYS = ["stack_id", "node_count", "edge_count", "truncated", "nodes", "edges"] as const;
 
 /** Node keys, in declaration order. */
-const NODE_KEYS = ["id", "label", "type", "confidence", "verified", "properties"] as const;
+const NODE_KEYS = [
+  "id",
+  "label",
+  "type",
+  "confidence",
+  "verified",
+  "properties",
+  "ontology_classification",
+] as const;
 
 /** Edge keys, in declaration order. */
-const EDGE_KEYS = ["id", "source", "target", "type", "confidence", "verified"] as const;
+const EDGE_KEYS = [
+  "id",
+  "source",
+  "target",
+  "type",
+  "confidence",
+  "verified",
+  "ontology_classification",
+] as const;
 
 interface GraphBody {
   stack_id: string;
@@ -127,6 +143,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
       confidence: 0.9,
       verified: true,
       properties: { tier: "edge" },
+      ontology_classification: { verdict: "accepted", reason: null, offending_type: null },
     });
   });
 
@@ -141,6 +158,7 @@ describe.skipIf(state.skipReason !== false)("stack graph (live database)", () =>
       type: "USED_BY",
       confidence: 0.75,
       verified: false,
+      ontology_classification: { verdict: "accepted", reason: null, offending_type: null },
     });
   });
 

@@ -223,11 +223,14 @@ describe.skipIf(state.skipReason !== false)("aks export classification projectio
     const uses = relationshipById(bundle, fixture.relationshipIds.uses);
 
     expect(uses.type).toBe("invalidates");
-    // AKSRelationship forbids extra fields, so classification stays in our columns.
+    // AKSRelationship is closed (`SCHEMA.json:562`) and has no `properties` map, so a
+    // relationship carries nothing beyond the contract's own keys — not the catalog
+    // decision and not the ontology's verdict.
     expect(Object.keys(uses).sort()).toEqual(
       ["confidence", "description", "from_entity_id", "id", "source", "to_entity_id", "type"].sort(),
     );
     expect(uses).not.toHaveProperty("properties");
+    expect(uses).not.toHaveProperty("ontology_classification");
   });
 
   it("scales the extraction confidence by the support state", async () => {

@@ -2,8 +2,9 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 
 import type { Database } from "../db.js";
-import { AKSEntity, AKSRelationship } from "../dto.js";
-import type { AKSEntityDto, AKSRelationshipDto } from "../dto.js";
+import { ACCEPTED_CLASSIFICATION, AKSEntity, AKSRelationship, ONTOLOGY_REJECTION_REASONS } from "../dto.js";
+import type { AKSClassificationDto, AKSEntityDto, AKSRelationshipDto } from "../dto.js";
+import type { RejectionReason } from "./ontology.js";
 import type { ClassificationState, SupportState } from "../schema-open-classification.js";
 import { UNCLASSIFIED_ENTITY_TYPE } from "./catalog/types.js";
 import { CLASSIFICATION_PROPERTY_KEY, classificationBlock } from "./graph_read.js";
@@ -93,21 +94,123 @@ import { CLASSIFICATION_PROPERTY_KEY, classificationBlock } from "./graph_read.j
  */
 
 /**
+ * The three columns that carry a row's ontology class, named once.
+ *
+ * Both tables have them, under the same names, so a read that selects an entity and a
+ * read that selects an edge splice the same text and cannot drift apart.
+ */
+export const ONTOLOGY_CLASS_COLUMNS =
+  "ontology_verdict, ontology_rejection_reason, ontology_offending_type";
+
+/** The ontology-verdict columns of one row, as any read path sees them. */
+export type OntologyClassColumns = {
+  readonly ontology_verdict: string | null;
+  readonly ontology_rejection_reason: string | null;
+  readonly ontology_offending_type: string | null;
+};
+
+/**
+ * One row's ontology class, as every entity and relationship model publishes it.
+ *
+ * The direction of the default is load-bearing and is the same one the columns'
+ * `not null default 'accepted'` uses: a row with no readable verdict is reported as
+ * accepted, because a value this build does not recognise can only come from a schema
+ * it does not know, and calling such a row `rejected` would withhold a fact nobody
+ * refused. Every real row carries `accepted` or `rejected`, so this branch is the
+ * tolerance, not the rule.
+ *
+ * The three columns move together: a rejected row always states its reason and the
+ * type that was refused, because the migration's equivalence CHECK makes "rejected with
+ * no reason" unrepresentable on disk. Nothing is invented here to fill a gap.
+ *
+ * @param row - The three ontology-verdict columns of one stored row.
+ * @returns The block the DTO declares, with `null` reason and type when accepted.
+ */
+/**
+ * The `properties` key an entity publishes its ontology class under.
+ *
+ * A reserved key of this application, beside {@link CLASSIFICATION_PROPERTY_KEY} and
+ * deliberately NOT merged into it: `kg_classification` answers the CATALOG question,
+ * this one answers the ONTOLOGY question, and reporting one as the other is the defect
+ * the feature avoids. The key is legal on the wire only because `SCHEMA.json:520` gives
+ * `AKSEntity.properties` `additionalProperties: true`.
+ */
+const ONTOLOGY_CLASS_PROPERTY_KEY = "ontology_classification";
+
+/**
+ * One entity's stored properties, with its ontology class published inside them.
+ *
+ * ## Why only a refused entity publishes a block
+ *
+ * This is the convention the read path already states for `kg_classification`: a row
+ * with nothing to report publishes nothing, and a pre-existing payload stays
+ * byte-identical instead of growing a block on every entity in the Stack. An accepted
+ * entity therefore carries NO ontology key, and the class of an accepted entity is
+ * stated where the shape allows it (the rendered text, the stack-graph node, the
+ * traverse step).
+ *
+ * It is also what keeps the spec-validated bundle honest: the default export is
+ * accepted-only, so a default bundle's entities carry no ontology key at all and the
+ * payload is byte-identical to the one this package emitted before the feature existed.
+ *
+ * @param stored - The row's own `properties`, already narrowed to an object.
+ * @param row - The three ontology-verdict columns of the same row.
+ * @returns The properties to publish, with the reserved key added when refused.
+ */
+function withOntologyClass(
+  stored: Record<string, unknown>,
+  row: OntologyClassColumns,
+): Record<string, unknown> {
+  const block = ontologyClassification(row);
+  if (block.verdict !== "rejected") return stored;
+  return { ...stored, [ONTOLOGY_CLASS_PROPERTY_KEY]: block };
+}
+
+export function ontologyClassification(row: OntologyClassColumns): AKSClassificationDto {
+  if (row.ontology_verdict !== "rejected") return ACCEPTED_CLASSIFICATION;
+  return {
+    verdict: "rejected",
+    reason: rejectionReason(row.ontology_rejection_reason),
+    offending_type: row.ontology_offending_type,
+  };
+}
+
+/**
+ * A stored reason narrowed to the declared vocabulary.
+ *
+ * `null` is the only other possibility the CHECK admits, and it is reported as `null`
+ * rather than thrown on: a read must not fail because one row is ahead of its reader.
+ */
+function rejectionReason(value: string | null): RejectionReason | null {
+  return (ONTOLOGY_REJECTION_REASONS as readonly string[]).includes(value ?? "")
+    ? (value as RejectionReason)
+    : null;
+}
+
+/**
  * Columns every entity read selects, in the Python handlers' order.
  *
  * Repeated verbatim in four queries across this slice (list, single, context,
  * export), which is why it lives here. Order is not observable in the response —
  * the DTO fixes that — but keeping it identical to Python keeps the two
  * statements diffable.
+ *
+ * The three ontology-verdict columns are appended — never inserted — for the same
+ * reason the DTO declares its block last: every column that was already selected keeps
+ * its place, so a consumer reading this list positionally sees no shift. They belong
+ * here rather than in an optional add-on because EVERY entity read must be able to say
+ * which class it returned (S4), including the paths that enforce no ontology at all.
  */
 export const ENTITY_COLUMNS =
   "id, name, type, description, properties, confidence, verified, last_seen_at, " +
-  "extracted_at, extracted_by_model, source_kind, pipeline";
+  "extracted_at, extracted_by_model, source_kind, pipeline, " +
+  ONTOLOGY_CLASS_COLUMNS;
 
 /** Columns every relationship read selects, in the Python handlers' order. */
 export const RELATIONSHIP_COLUMNS =
   "id, from_entity_id, to_entity_id, type, description, confidence, verified, " +
-  "extracted_at, extracted_by_model, source_kind, pipeline";
+  "extracted_at, extracted_by_model, source_kind, pipeline, " +
+  ONTOLOGY_CLASS_COLUMNS;
 
 /**
  * An `ontology_entities` row as {@link ENTITY_COLUMNS} selects it.
@@ -116,7 +219,7 @@ export const RELATIONSHIP_COLUMNS =
  * is typed `unknown` and narrowed by the `or {}` rule in {@link rowToEntity}.
  * `confidence` is a Postgres `real`, which postgres-js delivers as a `number`.
  */
-export type EntityRow = {
+export type EntityRow = OntologyClassColumns & {
   id: string;
   name: string;
   type: string;
@@ -132,7 +235,7 @@ export type EntityRow = {
 };
 
 /** An `ontology_relationships` row as {@link RELATIONSHIP_COLUMNS} selects it. */
-export type RelationshipRow = {
+export type RelationshipRow = OntologyClassColumns & {
   id: string;
   from_entity_id: string;
   to_entity_id: string;
@@ -176,7 +279,10 @@ export function rowToEntity(
     name: row.name,
     type: row.type,
     description: row.description,
-    properties: isPlainObject(row.properties) ? row.properties : {},
+    properties: withOntologyClass(
+      isPlainObject(row.properties) ? row.properties : {},
+      row,
+    ),
     confidence: Number(row.confidence),
     contributing_documents: [...contributingDocuments],
     last_seen_at: row.last_seen_at,
@@ -187,6 +293,7 @@ export function rowToEntity(
       verified: Boolean(row.verified),
       pipeline: row.pipeline,
     },
+    ontology_classification: ontologyClassification(row),
   });
 }
 
@@ -425,10 +532,11 @@ export function rowToExportEntity(
   contributingDocuments: readonly string[],
 ): AKSEntityDto {
   const entity = rowToEntity(row, contributingDocuments);
-  const stored = isPlainObject(row.properties) ? row.properties : {};
   const block = classificationProperties(row);
+  // `entity.properties` already carries whatever the entity builder published, so the
+  // catalog block is ADDED to it rather than replacing it.
   const properties =
-    block === null ? stored : { ...stored, [CLASSIFICATION_PROPERTY_KEY]: block };
+    block === null ? entity.properties : { ...entity.properties, [CLASSIFICATION_PROPERTY_KEY]: block };
   return AKSEntity.parse({
     ...entity,
     type: projectedEntityType(row),
@@ -440,8 +548,10 @@ export function rowToExportEntity(
 /**
  * `rowToRelationship` plus the classification projection.
  *
- * No metadata is added: `AKSRelationship` has `additionalProperties: false` and no
- * `properties` field, so a relationship's classification stays in our own columns.
+ * No metadata is added, and none CAN be: `AKSRelationship` is closed
+ * (`SCHEMA.json:562`, `additionalProperties: false`) and has no `properties` map, so a
+ * relationship's ontology class has no lawful channel on this object. Its catalog
+ * projection travels in the `type` and `confidence` values above.
  */
 export function rowToExportRelationship(row: ExportRelationshipRow): AKSRelationshipDto {
   const relationship = rowToRelationship(row);

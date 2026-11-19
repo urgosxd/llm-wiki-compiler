@@ -43,7 +43,12 @@ const OPTIONAL_DOMAIN_DESCRIPTION =
  */
 const ONTOLOGY_CLASS_DISCLOSURE =
   "Ontology-rejected items are present by default." +
-  " Pass accepted_only: true to remove them.";
+  " Pass accepted_only: true to remove them." +
+  " A rejected item is marked REJECTED in this text: entities carry" +
+  " properties.ontology_classification, traversal steps carry ontology_classification," +
+  " and a relationship is matched against the Stack's graph projection, because AKS closes" +
+  " the relationship object and it cannot carry the class itself." +
+  " Never present a rejected item as a fact the ontology vouches for.";
 
 /**
  * How every graph tool describes `accepted_only`.

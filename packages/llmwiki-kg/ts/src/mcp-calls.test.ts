@@ -57,13 +57,38 @@ describe("callTool routing", () => {
       { fetchImpl, baseUrl: BASE_URL },
     );
 
-    expect(requests).toHaveLength(1);
+    // TWO requests: the context answer, then `GET /domain/kg/stacks/:id/graph` to
+    // classify its edges, because AKS closes the relationship object and the class is not
+    // in the payload above. The first request is unchanged — that is the compatibility
+    // claim, asserted rather than described.
+    expect(requests).toHaveLength(2);
     const request = requests[0];
     expect(request?.method).toBe("POST");
     expect(request?.url).toBe("http://localhost:8000/aks/v1/context");
     // `max_entities` defaults to 8; the Stack is forwarded as the argument gave it.
     expect(request?.body).toBe(`{"query":"how are refunds handled?","max_entities":8,"stackId":"${STACK}"}`);
+    expect(requests[1]?.url).toBe(`http://localhost:8000/domain/kg/stacks/${STACK}/graph?limit=2000`);
     expect(textOf(result)).toBe(EXPECTED_CTX);
+  });
+
+  it("pays for the edge-classification read only when it can matter", async () => {
+    const wide = recordingFetch({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    await callTool(
+      "query_stack",
+      { query: "q", stackId: STACK },
+      { fetchImpl: wide.fetchImpl, baseUrl: BASE_URL },
+    );
+    const narrow = recordingFetch({ status: 200, body: SYNTHETIC_CONTEXT_RESPONSE });
+    await callTool(
+      "query_stack",
+      { query: "q", stackId: STACK, accepted_only: true },
+      { fetchImpl: narrow.fetchImpl, baseUrl: BASE_URL },
+    );
+
+    // accepted_only already removed every refused edge upstream, so the second read is
+    // skipped instead of paid for on a path where it cannot change a single line.
+    expect(wide.requests).toHaveLength(2);
+    expect(narrow.requests).toHaveLength(1);
   });
 
   it("forwards stackId and passes domain only as an additional filter", async () => {

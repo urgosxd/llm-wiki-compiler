@@ -38,9 +38,15 @@
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { toPostgresArrayLiteral } from "./aks_serializers.js";
+import {
+  ONTOLOGY_CLASS_COLUMNS,
+  ontologyClassification,
+  toPostgresArrayLiteral,
+} from "./aks_serializers.js";
+import type { OntologyClassColumns } from "./aks_serializers.js";
 import { resolveStack } from "./stack_resolver.js";
 import type { Database } from "../db.js";
+import { AKSClassification } from "../dto.js";
 import type { ApiError } from "../errors.js";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +59,11 @@ import type { ApiError } from "../errors.js";
  * `label` rather than `name`, and `id`/`source`/`target` rather than
  * `from_entity_id`/`to_entity_id`: this is the vocabulary of node-link data, and
  * a renderer should not have to know that the rows came from an ontology table.
+ *
+ * `ontology_classification` is the same three-field block the AKS models carry, on
+ * purpose: a renderer that draws a refused node as an ordinary one is drawing a claim
+ * the ontology did not make, and the class is what lets it tell them apart without
+ * asking a second endpoint.
  */
 export const StackGraphNode = z.object({
   id: z.uuid(),
@@ -61,6 +72,7 @@ export const StackGraphNode = z.object({
   confidence: z.number(),
   verified: z.boolean(),
   properties: z.record(z.string(), z.unknown()),
+  ontology_classification: AKSClassification,
 });
 
 /** One drawable relationship: a directed edge between two node ids. */
@@ -71,6 +83,7 @@ export const StackGraphEdge = z.object({
   type: z.string(),
   confidence: z.number(),
   verified: z.boolean(),
+  ontology_classification: AKSClassification,
 });
 
 /** The whole payload. Declaration order is the JSON key order. */
@@ -90,7 +103,7 @@ export type StackGraphDto = z.infer<typeof StackGraph>;
 // ---------------------------------------------------------------------------
 
 /** An `ontology_entities` row as this module selects it. */
-type NodeRow = {
+type NodeRow = OntologyClassColumns & {
   id: string;
   name: string;
   type: string;
@@ -100,7 +113,7 @@ type NodeRow = {
 };
 
 /** An `ontology_relationships` row as this module selects it. */
-type EdgeRow = {
+type EdgeRow = OntologyClassColumns & {
   id: string;
   from_entity_id: string;
   to_entity_id: string;
@@ -142,10 +155,10 @@ export type StackGraphResult =
  * draws a label, a type and a weight, and the rest would inflate every payload
  * for callers that never look at it. A caller needing them reads `/aks/v1`.
  */
-const NODE_COLUMNS = "id, name, type, properties, confidence, verified";
+const NODE_COLUMNS = `id, name, type, properties, confidence, verified, ${ONTOLOGY_CLASS_COLUMNS}`;
 
 /** Columns every edge read selects. */
-const EDGE_COLUMNS = "id, from_entity_id, to_entity_id, type, confidence, verified";
+const EDGE_COLUMNS = `id, from_entity_id, to_entity_id, type, confidence, verified, ${ONTOLOGY_CLASS_COLUMNS}`;
 
 /** True when `value` is a plain JSON object, which is what `properties` must be. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -270,6 +283,9 @@ async function loadEdges(
  * `properties` falls back to `{}` for SQL NULL, the same rule `rowToEntity`
  * applies: a node whose `properties` were `null` would force every renderer to
  * null-check a field the column defaults to an empty object anyway.
+ *
+ * The ontology block is stated EXPLICITLY from the row, never left to the schema's
+ * default, so a refused node cannot reach a renderer labelled as accepted.
  */
 function rowToNode(row: NodeRow): StackGraphDto["nodes"][number] {
   return {
@@ -279,6 +295,7 @@ function rowToNode(row: NodeRow): StackGraphDto["nodes"][number] {
     confidence: Number(row.confidence),
     verified: Boolean(row.verified),
     properties: isPlainObject(row.properties) ? row.properties : {},
+    ontology_classification: ontologyClassification(row),
   };
 }
 
@@ -291,6 +308,7 @@ function rowToEdge(row: EdgeRow): StackGraphDto["edges"][number] {
     type: row.type,
     confidence: Number(row.confidence),
     verified: Boolean(row.verified),
+    ontology_classification: ontologyClassification(row),
   };
 }
 

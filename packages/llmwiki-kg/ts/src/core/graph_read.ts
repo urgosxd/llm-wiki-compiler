@@ -50,7 +50,16 @@
  * 3. **A row publishes its state when it has one.** The AKS DTO's only extension
  *    point is the entity's `properties` object, so
  *    {@link withClassificationState} adds {@link CLASSIFICATION_PROPERTY_KEY}
- *    there — never a new top-level field, which the schema would strip anyway.
+ *    there, beside whatever the row already carried.
+ *
+ * ## Two axes, two blocks, never merged
+ *
+ * `classification_state` (the CATALOG axis) and `ontology_verdict` (whether the
+ * ontology accepted the item at all) are different questions, and they are answered in
+ * different places: the catalog decision travels inside
+ * `properties.kg_classification`, while the ontology class is the DECLARED top-level
+ * `ontology_classification` that every entity, relationship and step carries. Writing
+ * one into the other would report one question's answer as the other's.
  *
  * Name lookups became ambiguous when the migration replaced name-only uniqueness
  * with the identity key, so every `lower(name)` match is now resolved through
@@ -64,15 +73,18 @@ import { apiError, type ApiError } from "../errors.js";
 import type { AKSTraverseResponseDto } from "../dto.js";
 import {
   ENTITY_COLUMNS,
+  ONTOLOGY_CLASS_COLUMNS,
   fetchContributingDocuments,
+  ontologyClassification,
   rowToEntity,
   toPostgresArrayLiteral,
 } from "./aks_serializers.js";
+import type { OntologyClassColumns } from "./aks_serializers.js";
 import type { AKSEntityDto } from "../dto.js";
 import { resolveStack, type StackResolution } from "./stack_resolver.js";
 
 /** One row of the recursive relationship walk. */
-type TraverseRow = {
+type TraverseRow = OntologyClassColumns & {
   from_id: string | null;
   rel_type: string | null;
   to_id: string | null;
@@ -420,16 +432,20 @@ function rowToStep(row: TraverseRow): AKSTraverseResponseDto["steps"][number] {
     // `real` is not null in the schema, and the anchor row is already excluded
     // above, so a null here would mean the join dropped its row.
     confidence: Number(requireNumber(row.confidence, "confidence")),
+    // The class of the edge this step crossed. The walk crosses refused edges by
+    // default, so a step that omitted it would hide the one thing the caller needs.
+    ontology_classification: ontologyClassification(row),
   };
 }
 
 /** What one case-insensitive name lookup found. */
-export type EntityNamePick = ClassificationColumns & {
-  readonly id: string;
-  readonly name: string;
-  /** How many rows in the Stack share the requested name, at least one. */
-  readonly matches: number;
-};
+export type EntityNamePick = ClassificationColumns &
+  OntologyClassColumns & {
+    readonly id: string;
+    readonly name: string;
+    /** How many rows in the Stack share the requested name, at least one. */
+    readonly matches: number;
+  };
 
 /**
  * The deterministic pick among rows sharing one case-insensitive name.
@@ -456,17 +472,24 @@ export type EntityNamePick = ClassificationColumns & {
  * @param tx - Transaction carrying the read.
  * @param stackId - Stack to search.
  * @param name - Requested name, matched case-insensitively and in full.
+ * @param acceptedOnly - When `true`, a row the ontology refused is not eligible: the
+ *   lookup answers exactly as if no row carried that name, so the caller's own
+ *   not-found response is the one a client receives. Absent and `false` are the same
+ *   answer — the wide one.
  * @returns The picked row's identity and classification, or `null` when absent.
  */
 export async function pickEntityIdByName(
   tx: Database,
   stackId: string,
   name: string,
+  acceptedOnly: boolean | undefined = false,
 ): Promise<EntityNamePick | null> {
   const rows = await tx.execute<EntityNamePick>(sql`
-    select id, name, ${sql.raw(CLASSIFICATION_COLUMNS)}, (count(*) over ())::int as matches
+    select id, name, ${sql.raw(CLASSIFICATION_COLUMNS)}, ${sql.raw(ONTOLOGY_CLASS_COLUMNS)},
+           (count(*) over ())::int as matches
     from ontology_entities
     where stack_id = ${stackId} and lower(name) = lower(${name})
+      ${verdictClause(acceptedOnly, ACCEPTED_ENTITY_CLAUSE)}
     order by
       case when classification_state = 'classified' then 0 else 1 end,
       confidence desc,
@@ -509,6 +532,9 @@ function walkStatement(
         null::text as rel_type,
         null::uuid as to_id,
         null::real as confidence,
+        null::text as ontology_verdict,
+        null::text as ontology_rejection_reason,
+        null::text as ontology_offending_type,
         0 as depth
       union all
       select
@@ -518,6 +544,9 @@ function walkStatement(
         r.type,
         r.to_entity_id,
         r.confidence,
+        r.ontology_verdict,
+        r.ontology_rejection_reason,
+        r.ontology_offending_type,
         w.depth + 1
       from walk w
       join ontology_relationships r
@@ -530,6 +559,7 @@ function walkStatement(
     )
     select
       w.from_id, w.rel_type, w.to_id, w.depth, w.confidence,
+      w.ontology_verdict, w.ontology_rejection_reason, w.ontology_offending_type,
       ef.name as from_name, et.name as to_name
     from walk w
     left join ontology_entities ef on ef.id = w.from_id
@@ -651,6 +681,11 @@ export async function readEntities(
  * @param stackId - Stack identity, or null when `domain` names it instead.
  * @param domain - Stack slug, used only when `stackId` is null.
  * @param name - Requested entity name.
+ * @param acceptedOnly - When `true`, an entity the ontology refused is answered with
+ *   this route's EXISTING not-found failure, because the lookup narrowed by the class
+ *   finds nothing to pick. No new status is invented: a caller asking for the accepted
+ *   class and naming a refused entity gets exactly what a caller naming an absent
+ *   entity gets.
  * @returns The entity, or the error a transport should encode.
  */
 export async function readEntityByName(
@@ -658,11 +693,12 @@ export async function readEntityByName(
   stackId: string | null,
   domain: string | null,
   name: string,
+  acceptedOnly = false,
 ): Promise<GraphReadResult<AKSEntityDto>> {
   const stack = await resolveStack(tx, stackId, domain);
   if (!stack.ok) return { ok: false, error: readFailure(codeOf(stack.error), stack.error.body.detail) };
 
-  const pick = await pickEntityIdByName(tx, stack.stack.id, name);
+  const pick = await pickEntityIdByName(tx, stack.stack.id, name, acceptedOnly);
   if (pick === null) {
     return { ok: false, error: readFailure("not_found", `Entity '${name}' not found in Stack`) };
   }
