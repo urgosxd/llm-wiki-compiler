@@ -507,7 +507,31 @@ function relationshipKey(relationship: ExtractedRelationship): string {
   ].join("\u0000");
 }
 
-/** Merges duplicate relationships, keeping the highest confidence per key. */
+/**
+ * Merges duplicate relationships, keeping the highest confidence per key.
+ *
+ * ## ACCEPTED WINS: a collision is resolved, never decided by fold order
+ *
+ * `unique_edge_per_stack (stack_id, from_entity_id, to_entity_id, type)` — the constraint
+ * the migration KEPT rather than replaced — admits ONE row per identity, so an accepted
+ * triplet and a rejected one naming the same subject, relation and object cannot both
+ * persist. Which class survives must therefore be a rule:
+ *
+ * 1. **An acceptance beats a rejection in either direction.** `absorbEndpoint` already
+ *    repairs a node the same way; here the edge's reason and refused type are DELETED
+ *    with the verdict, because `ontology_rejection_reason_requires_rejected` refuses a
+ *    reason on an accepted row, so clearing the class without clearing the prose would
+ *    be an update the CHECK rejects.
+ * 2. **A collision between two rejections keeps the FIRST one.** `merged` is fed in
+ *    extraction order and a kept rejection is never rewritten below, so the survivor is
+ *    the first refusal the document produced — never whichever record a `Map` happened
+ *    to yield, which a `for…of` over the merged entries would have made unstable.
+ *
+ * Fold order alone would give the right answer only by luck: this module folds a chunk's
+ * admitted triplets before its refusals, so "accepted then rejected" survives and
+ * "rejected then accepted" silently stores the refusal. That asymmetry is what this
+ * function removes.
+ */
 function mergeRelationships(
   relationships: readonly ClassifiedRelationship[],
 ): Map<string, ClassifiedRelationship> {
@@ -522,6 +546,11 @@ function mergeRelationships(
     if (relationship.confidence > existing.confidence) {
       existing.description = relationship.description;
       existing.confidence = relationship.confidence;
+    }
+    if (relationship.ontologyVerdict === "accepted" && existing.ontologyVerdict === "rejected") {
+      existing.ontologyVerdict = "accepted";
+      delete existing.ontologyRejectionReason;
+      delete existing.ontologyOffendingType;
     }
     existing.sourceChunkIndices.push(...relationship.sourceChunkIndices);
   }

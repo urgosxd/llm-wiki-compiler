@@ -124,19 +124,36 @@ async function findExistingEntity(
 }
 
 /**
- * Rewrites an existing entity's confidence, description and freshness.
+ * Rewrites an existing entity's confidence, description, freshness — and, accepted-wins,
+ * its ontology class.
  *
  * A NULL description is treated as empty and written back as `''`, and the
  * description is replaced only when strictly longer — both measured on the
  * oracle.
  *
- * The ontology class is NOT rewritten: a row found by name keeps the verdict it was
- * inserted with, so a re-extraction cannot flip a stored class. Correcting a class on
- * an existing row is a separate decision, not a side effect of corroboration.
+ * ## The class moves in ONE direction, and only when a row was refused (S7)
+ *
+ * `unique_edge_per_stack`'s sibling for nodes is the name lookup above, so one mention and
+ * another mention of the same name are ONE row: a refusal and an acceptance of it cannot
+ * both persist, and a later re-ingest must not be able to flip a stored class either way.
+ *
+ * - **A stored rejection that is now admitted BECOMES accepted.** The admitted type
+ *   replaces the refused one, and the reason and offending type are cleared WITH the
+ *   verdict: an accepted row carrying an undeclared type, or a reason, is a row
+ *   `ontology_rejection_reason_requires_rejected` refuses and a reader could not tell from
+ *   a real admission. This is the half the previous behaviour was missing — the class was
+ *   simply never rewritten, so a refusal outlived the refusal.
+ * - **A stored acceptance is never downgraded.** The reverse direction is deliberately not
+ *   performed: a mention at fault later does not retract what the ontology already
+ *   vouched for, and `type` keeps the admitted label.
+ *
+ * Both class rules come from the STORED `ontology_verdict` and the incoming one, and all
+ * three columns are derived from those same two values in the same statement, so the triple
+ * they write can never disagree — the CHECK is not relied on to catch a half-update.
  */
 async function updateEntity(
   tx: DatabaseHandle,
-  entity: ExtractedEntity,
+  entity: ConsolidationEntity,
   existing: EntityLookupRow,
 ): Promise<string> {
   const existingConfidence = Number(existing.confidence);
@@ -151,13 +168,35 @@ async function updateEntity(
     extractedDescription !== "" && extractedDescription.length > existingDescription.length
       ? extractedDescription
       : existingDescription;
+  // Absent means accepted: the column's own default, and the state every row written by a
+  // caller that never enforced a declaration is in.
+  const incomingVerdict = entity.ontologyVerdict ?? "accepted";
+  // The row is admitted once EITHER side admits it. Never the other way round.
+  const staysAdmitted = sql`(ontology_entities.ontology_verdict = 'accepted' or ${incomingVerdict} = 'accepted')`;
 
   await tx.execute(sql`
     update ontology_entities
     set confidence = ${nextConfidence},
         description = ${nextDescription},
         last_seen_at = now(),
-        updated_at = now()
+        updated_at = now(),
+        type = case
+          when ontology_entities.ontology_verdict = 'rejected' and ${incomingVerdict} = 'accepted'
+          then ${entity.type}
+          else ontology_entities.type
+        end,
+        ontology_verdict = case
+          when ${staysAdmitted} then 'accepted'
+          else 'rejected'
+        end,
+        ontology_rejection_reason = case
+          when ${staysAdmitted} then null
+          else ontology_entities.ontology_rejection_reason
+        end,
+        ontology_offending_type = case
+          when ${staysAdmitted} then null
+          else ontology_entities.ontology_offending_type
+        end
     where id = ${existing.id}
   `);
   return existing.id;
@@ -411,6 +450,108 @@ async function existingEdge(
 }
 
 /**
+ * The `do update set` fragment that makes an acceptance survive a collision.
+ *
+ * A fragment and not three cases inline, so the three columns stay visibly ONE decision:
+ * they are all derived from the same two verdicts — the stored row's and `excluded`'s —
+ * which is what stops the triple from disagreeing. `ontology_rejection_reason_requires_rejected`
+ * refuses a rejected row with no reason and an accepted row with one, so three independent
+ * cases that disagreed would turn a re-ingest into a failed transaction instead of a
+ * merely wrong class.
+ *
+ * The rule, in one direction only: the row is accepted once EITHER side accepts it. A
+ * stored acceptance is never downgraded to a refusal, and a stored refusal IS upgraded when
+ * a later document is admitted — a refusal is not permanent. Two rejections on one identity
+ * keep the STORED one, the first this Stack ever recorded, for the same reason the predicate
+ * is kept: `do update` does not rewrite what the first writer established.
+ */
+const ACCEPTED_WINS_SET = sql`
+  ontology_verdict = case
+    when (ontology_relationships.ontology_verdict = 'accepted' or excluded.ontology_verdict = 'accepted')
+    then 'accepted'
+    else 'rejected'
+  end,
+  ontology_rejection_reason = case
+    when (ontology_relationships.ontology_verdict = 'accepted' or excluded.ontology_verdict = 'accepted')
+    then null
+    else ontology_relationships.ontology_rejection_reason
+  end,
+  ontology_offending_type = case
+    when (ontology_relationships.ontology_verdict = 'accepted' or excluded.ontology_verdict = 'accepted')
+    then null
+    else ontology_relationships.ontology_offending_type
+  end
+`;
+
+/**
+ * Writes one relationship row, through the collision clause that decides its class.
+ *
+ * Extracted from the loop below so the statement and the rule that governs a collision
+ * read as one unit rather than two halves of a long function.
+ *
+ * `type` keeps its projection meaning and is NOT rewritten by a classification, so no
+ * later update can collide with `unique_edge_per_stack`. The original verb travels in
+ * `predicate`, which the trigger copies from `type` when the caller supplied none, and
+ * `identity_key` is what keeps two distinct free predicates between the same endpoints
+ * apart (S33).
+ *
+ * The three ontology columns are bound exactly as the entity insert binds them, so an edge
+ * the ontology refused is a ROW with its reason instead of a counter that describes nothing.
+ *
+ * ## The class is enforced HERE as well as in memory, because accepted must win
+ *
+ * `unique_edge_per_stack (stack_id, from_entity_id, to_entity_id, type)` is the very
+ * identity this clause collides on, and it admits one row per identity — so a refusal and
+ * an acceptance of the same edge cannot both persist, and "both were written" is not an
+ * available answer. Enforcing this only in `mergeRelationships` would leave the invariant
+ * unprotected against every OTHER writer: that merge sees one extraction, while this
+ * statement sees every ingest, so a re-ingest of an earlier chunk would be free to flip the
+ * class. {@link ACCEPTED_WINS_SET} is the rule; this statement is where it is applied.
+ *
+ * @param tx - Transaction carrying the write.
+ * @param stackId - Stack the edge belongs to.
+ * @param ids - The endpoint row ids the folded names resolved to.
+ * @param relationship - The folded relationship, with the class its row must carry.
+ */
+async function upsertRelationshipRow(
+  tx: DatabaseHandle,
+  stackId: string,
+  ids: { readonly fromId: string; readonly toId: string },
+  relationship: ConsolidationRelationship,
+): Promise<void> {
+  await tx.execute(sql`
+    insert into ontology_relationships (
+      stack_id, from_entity_id, to_entity_id, type,
+      description, confidence, extracted_by_model, source_kind, pipeline,
+      predicate, identity_key, classification_state,
+      ontology_verdict, ontology_rejection_reason, ontology_offending_type
+    )
+    values (
+      ${stackId}, ${ids.fromId}, ${ids.toId}, ${relationship.type},
+      ${relationship.description}, ${relationship.confidence},
+      ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
+      ${relationship.predicate ?? null}, ${relationship.identityKey ?? null},
+      ${relationship.classificationState ?? null},
+      ${relationship.ontologyVerdict ?? "accepted"},
+      ${relationship.ontologyRejectionReason ?? null},
+      ${relationship.ontologyOffendingType ?? null}
+    )
+    on conflict (stack_id, from_entity_id, to_entity_id, type)
+    do update set
+      confidence = greatest(
+        ontology_relationships.confidence,
+        excluded.confidence
+      ),
+      description = case
+        when excluded.confidence > ontology_relationships.confidence
+        then excluded.description
+        else ontology_relationships.description
+      end,
+      ${ACCEPTED_WINS_SET}
+  `);
+}
+
+/**
  * `consolidate_relationships` with the collisions it caused, for a caller that must
  * record them.
  *
@@ -448,46 +589,7 @@ export async function consolidateRelationshipRowsDetailed(
       });
     }
 
-    // `type` keeps its projection meaning and is NOT rewritten by a
-    // classification, so no later update can collide with `unique_edge_per_stack`.
-    // The original verb travels in `predicate`, which the trigger copies from `type`
-    // when the caller supplied none, and `identity_key` is what keeps two distinct
-    // free predicates between the same endpoints apart (S33).
-    //
-    // The three ontology columns are bound exactly as the entity insert binds them, so
-    // an edge the ontology refused is a ROW with its reason instead of a counter that
-    // describes nothing. They are deliberately ABSENT from the `do update` clause: the
-    // class of the row that already occupies this identity survives a re-ingest, so a
-    // later write can neither downgrade nor upgrade it.
-    await tx.execute(sql`
-      insert into ontology_relationships (
-        stack_id, from_entity_id, to_entity_id, type,
-        description, confidence, extracted_by_model, source_kind, pipeline,
-        predicate, identity_key, classification_state,
-        ontology_verdict, ontology_rejection_reason, ontology_offending_type
-      )
-      values (
-        ${stackId}, ${fromId}, ${toId}, ${relationship.type},
-        ${relationship.description}, ${relationship.confidence},
-        ${extractionModel()}, ${DOCUMENT_SOURCE_KIND}, ${DOCUMENT_PIPELINE},
-        ${relationship.predicate ?? null}, ${relationship.identityKey ?? null},
-        ${relationship.classificationState ?? null},
-        ${relationship.ontologyVerdict ?? "accepted"},
-        ${relationship.ontologyRejectionReason ?? null},
-        ${relationship.ontologyOffendingType ?? null}
-      )
-      on conflict (stack_id, from_entity_id, to_entity_id, type)
-      do update set
-        confidence = greatest(
-          ontology_relationships.confidence,
-          excluded.confidence
-        ),
-        description = case
-          when excluded.confidence > ontology_relationships.confidence
-          then excluded.description
-          else ontology_relationships.description
-        end
-    `);
+    await upsertRelationshipRow(tx, stackId, { fromId, toId }, relationship);
     written += 1;
   }
 
