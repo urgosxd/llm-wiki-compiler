@@ -268,6 +268,53 @@ async function edgeRows(stackId: string): Promise<readonly EdgeRow[]> {
 }
 
 /**
+ * Reads the ONE stored row of {@link EDGE} for a Stack, with the count asserted on the way.
+ *
+ * The "not two rows" fact and the `unique_edge_per_stack` collision are the same fact, so
+ * every read of this identity pins it: the length assertion runs before the row is used,
+ * and a run where the identity is absent fails here instead of throwing later inside an
+ * assertion that would then name a missing property rather than a missing row.
+ *
+ * @param stackId - The Stack to read.
+ * @returns The single row, its class columns ready to be asserted.
+ */
+async function theSingleEdgeRow(stackId: string): Promise<EdgeRow> {
+  const rows = await edgeRows(stackId);
+  expect(rows.length).toBe(1);
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error(`expected one ${EDGE.type} row in ${stackId}, found none`);
+  }
+  return row;
+}
+
+/**
+ * Asserts the stored class of a row is the one a refused triplet carries.
+ *
+ * The reason is the classifier's SPECIFIC code, not a boolean and not the word
+ * "rejected": a row that only said "refused" would pass a weaker pin than this one.
+ *
+ * @param row - The row to read the class columns from.
+ */
+function expectRefusedForTheUndeclaredVerb(row: EdgeRow): void {
+  expect(row.verdict).toBe("rejected");
+  expect(row.reason).toBe("UNKNOWN_RELATIONSHIP_TYPE");
+  expect(row.offending).toBe(EDGE.type);
+}
+
+/**
+ * Asserts the stored class of a row is the one an admitted triplet carries, with none of
+ * the prose a refusal leaves behind.
+ *
+ * @param row - The row to read the class columns from.
+ */
+function expectAcceptedWithNoRefusalProse(row: EdgeRow): void {
+  expect(row.verdict).toBe("accepted");
+  expect(row.reason).toBeNull();
+  expect(row.offending).toBeNull();
+}
+
+/**
  * Counts the rows of {@link EDGE} whose stored class is `rejected`, in SQL.
  *
  * A query of its own rather than a filter over {@link edgeRows}, so the "the old verdict
@@ -310,37 +357,42 @@ afterAll(async () => {
 });
 
 /**
- * S8 itself: a refused triplet whose declaration later admits it ends as ONE row
- * carrying the NEW class.
+ * Creates a Stack on {@link DECLARATION_BEFORE}, stores the document, and compiles it once.
  *
  * The first compile is a precondition, not a warm-up: if the refused row is missing the
- * flip has nothing to follow, and the first assertion says so instead of letting the
- * later ones pass over an empty set.
+ * flip has nothing to follow, so both pins below start here rather than repeating the
+ * three steps that put the refused triplet on disk.
+ *
+ * @param label - A readable fragment for the Stack's domain, so a failure names its case.
+ * @returns The Stack and document that the refused triplet belongs to.
+ */
+async function refusedTripletOnDisk(label: string): Promise<{ stackId: string; documentId: string }> {
+  const stackId = await createStack(DECLARATION_BEFORE, label);
+  const documentId = await createDocument(stackId, BODY);
+  await compile({ stackId, documentId }, true);
+  return { stackId, documentId };
+}
+
+/**
+ * S8 itself: a refused triplet whose declaration later admits it ends as ONE row
+ * carrying the NEW class.
  */
 async function pinOneRowWithTheNewVerdict(): Promise<void> {
-  const run = { stackId: await createStack(DECLARATION_BEFORE, "flip"), documentId: "" };
-  run.documentId = await createDocument(run.stackId, BODY);
-  await compile(run, true);
+  const run = await refusedTripletOnDisk("flip");
 
   // BEFORE: the row exists, refused, with the specific reason the classifier produces.
-  const before = await edgeRows(run.stackId);
-  expect(before.length).toBe(1);
-  expect(before[0]?.verdict).toBe("rejected");
-  expect(before[0]?.reason).toBe("UNKNOWN_RELATIONSHIP_TYPE");
-  expect(before[0]?.offending).toBe(EDGE.type);
+  const before = await theSingleEdgeRow(run.stackId);
+  expectRefusedForTheUndeclaredVerb(before);
 
   // THE CHANGE: the same Stack, the same document bytes, one more declared verb.
   expect(await patchOntology(run.stackId, DECLARATION_AFTER)).toBe(200);
   await compile(run, false);
 
   // AFTER: exactly one row, the SAME row, carrying the new class and no prose of the old one.
-  const after = await edgeRows(run.stackId);
-  expect(after.length).toBe(1);
-  expect(after[0]?.id).toBe(before[0]?.id);
-  expect(after[0]?.identity_key).toBe(EDGE.identityKey);
-  expect(after[0]?.verdict).toBe("accepted");
-  expect(after[0]?.reason).toBeNull();
-  expect(after[0]?.offending).toBeNull();
+  const after = await theSingleEdgeRow(run.stackId);
+  expect(after.id).toBe(before.id);
+  expect(after.identity_key).toBe(EDGE.identityKey);
+  expectAcceptedWithNoRefusalProse(after);
   expect(await rejectedEdgeCount(run.stackId)).toBe(0);
 }
 
@@ -352,20 +404,14 @@ async function pinOneRowWithTheNewVerdict(): Promise<void> {
  * second compile on its own is idempotent for this row.
  */
 async function pinRecompileAloneKeepsTheVerdict(): Promise<void> {
-  const run = { stackId: await createStack(DECLARATION_BEFORE, "control"), documentId: "" };
-  run.documentId = await createDocument(run.stackId, BODY);
-  await compile(run, true);
-  const before = await edgeRows(run.stackId);
-  expect(before.length).toBe(1);
+  const run = await refusedTripletOnDisk("control");
+  const before = await theSingleEdgeRow(run.stackId);
 
   await compile(run, false);
 
-  const after = await edgeRows(run.stackId);
-  expect(after.length).toBe(1);
-  expect(after[0]?.id).toBe(before[0]?.id);
-  expect(after[0]?.verdict).toBe("rejected");
-  expect(after[0]?.reason).toBe("UNKNOWN_RELATIONSHIP_TYPE");
-  expect(after[0]?.offending).toBe(EDGE.type);
+  const after = await theSingleEdgeRow(run.stackId);
+  expect(after.id).toBe(before.id);
+  expectRefusedForTheUndeclaredVerb(after);
   expect(await rejectedEdgeCount(run.stackId)).toBe(1);
 }
 
