@@ -26,7 +26,7 @@
  * further out. The crawl is a fixed point: transform every discovered in-repo
  * module that has not been transformed yet, until no new module appears. That second
  * phase is load-bearing, and the parity fixture proves it: the same pair of inputs
- * selects 23 files against 6 for the first one, a contrast a single pass cannot
+ * selects 24 files against 6 for the first one, a contrast a single pass cannot
  * produce.
  *
  * PURE BY CONTRACT. No child process, no network, no database, no writes inside the

@@ -32,7 +32,7 @@ Restores answer-citation resolution on row-backed Stacks: `collectAnswerCitation
 - [ ] T4 — independent verification and gates. S9, S10.
 - [x] T5 — forward the SDK's captured environment into answer generation, and pin it with `test/sdk/query-citation-env.test.ts` (the SDK door of S4, and S5 through it). Commit 4 (`fix(sdk): forward the caller's environment into answer generation`).
 - [x] T6 — pin the alias carrier `createRawPageSource` gained in T2 with one case on `RawPageSource`, present and absent. S8. Commit 5 (`test(pages): pin aliases on the row-backed raw page source`).
-- [ ] T7 — independent re-verification of T5 and T6 by a verifier that did not write them. S9, S10.
+- [x] T7 — independent re-verification of T5 and T6 by a verifier that did not write them. S9, S10. Commit 7 (`docs(odd): close the re-verification and refresh the pair-oracle header`).
 - [x] T8 — gate integrity: re-freeze the pair oracle for the SDK citation suite so the gate of record passes. S9. Commit 6 (`test(module-graph): re-freeze the pair oracle for the SDK citation suite`).
 
 ## Log
@@ -479,4 +479,32 @@ copies) was removed.
 
 **S10 stands.** This commit restores the gate of record; it proves nothing new about the
 human's production citations.
+
+### L6 — T7 evidence: the independent re-verification, closed (covers S9, S10)
+
+The re-verification by a verifier that wrote neither T5 nor T6 returned S1-S10 MET on the
+substance, with one blocker and two corroborations:
+
+1. **Gate-of-record blocker, now closed.** `test/module-graph-crawl.test.ts`'s frozen pair
+   oracle failed at the commits the verifier was given; L5 diagnosed it and T8
+   (`3fafda01`) re-froze it. The blocker is the reason the re-verification could not itself
+   return a clean run, not a disputed finding.
+2. **The SDK tenant defect (`4f00ac37`, T5) is gone, independently reproduced.** Reverting
+   its one-line env forward inside a scratch copy returned `alpha-a resolved / alpha-b
+   broken` — the pre-fix answer under the swapped tenant — so the pin is non-vacuous and the
+   commit's own version is what makes it correct. That revert was never committed.
+3. **The oracle still discriminates in both directions.** `test/module-graph-crawl.test.ts:179`
+   compares the derived selection to `PAIR_TESTS` with `toEqual`, so a missing entry and an
+   extra one both fail; re-freezing it did not turn it into a tautology.
+
+**Not restated here:** the seam, the disk-versus-rows differential, the SDK enumeration and
+all counts live in L2-L5; this entry records only the verdict and what closed it.
+
+**Header drift this commit fixes.** `scripts/module-graph.ts`'s own file header still read
+`selects 23 files against 6` for the pair, left over from before T8 moved the frozen count to
+24 — the reference L5 item 3 renumbered lived in the test file, not here. Comment text only;
+no logic, no assertion, no other line of that file.
+
+**S10 stands, unchanged.** No row-backed production Stack was shown resolving a citation, and
+nothing here claims the human's production citations resolve.
 
