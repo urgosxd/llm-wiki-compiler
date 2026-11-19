@@ -238,9 +238,19 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
         return runEval(root, mode, DEFAULT_SAMPLE_SIZE, record);
       }),
 
-    exportOkf: (opts = {}) => runQuiet(() => runOkfExport(root, opts)),
+    // `env` is forwarded for the reason `lint` states, and the export has a seam for it
+    // to reach: `runOkfExport` resolves `opts.env ?? process.env` and reads its pages
+    // through `withRawPageSource(root, env, …)`. Dropping it made a handle bound to
+    // Stack B export the AMBIENT Stack's pages -- a valid OKF bundle describing another
+    // tenant, with nothing inside it to say so.
+    exportOkf: (opts = {}) => runQuiet(() => runOkfExport(root, { ...opts, env })),
 
-    importOkf: (dir, opts = {}) => runQuiet(() => runOkfImport(root, dir, opts)),
+    // `env` is forwarded for the reason `query` states, and this door WRITES: `runOkfImport`
+    // resolves `opts.env ?? process.env` and lands the pages through `writeAll` →
+    // `withPageSeams(env, …)`. Dropping it made a handle bound to Stack B import into the
+    // AMBIENT Stack, growing another tenant's corpus while the report read `written`. Only
+    // the write is a Stack seam: an import reads its bundle from `dir`, not from a Stack.
+    importOkf: (dir, opts = {}) => runQuiet(() => runOkfImport(root, dir, { ...opts, env })),
 
     // @experimental preparation slice — factored into preparation-facade.ts.
     // The embedder's preparation identity and grants are read HERE, at

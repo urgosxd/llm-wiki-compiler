@@ -26,6 +26,8 @@ import { expect, vi } from "vitest";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
+import type { Wiki } from "../../packages/wiki/src/sdk/types.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
@@ -112,4 +114,24 @@ export function bindProcessTo(stack: ProbeStack): void {
  */
 export async function expectNoWikiTree(root: string): Promise<void> {
   await expect(readdir(path.join(root, "wiki"))).rejects.toThrow(/ENOENT/);
+}
+
+/**
+ * Open a case the way every Stack-versus-ambient proof opens it, and hand back the facade
+ * handle bound to the OTHER Stack.
+ *
+ * The three statements are load-bearing and are ordered for it: the reachability assertion
+ * (a run with no database proves nothing, so it must fail rather than skip), the empty
+ * tree (no answer may come from a disk read), and the ambient binding (a door that agrees
+ * with the process by accident must not pass). Written once, a suite body keeps only the
+ * call it pins and the fields it reads back.
+ *
+ * @param two - The pair, released by the calling suite.
+ * @returns A `createWiki` handle whose `env` names `two.bound`.
+ */
+export async function handleOnBoundStack(two: TwoStacks): Promise<Wiki> {
+  requireReachable(two);
+  await expectNoWikiTree(two.root);
+  bindProcessTo(two.ambient);
+  return createWiki({ root: two.root, env: two.bound.env() });
 }

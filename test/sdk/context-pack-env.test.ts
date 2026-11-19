@@ -39,8 +39,7 @@ import type { ContextPack } from "../../packages/wiki/src/context/types.js";
 import {
   bindProcessTo,
   createTwoStacks,
-  expectNoWikiTree,
-  requireReachable,
+  handleOnBoundStack,
 } from "./two-stack-env.js";
 
 const two = await createTwoStacks("sdk-context-pack-env");
@@ -50,13 +49,8 @@ afterAll(async () => {
 });
 
 it("assembles the pack from the Stack the handle names, never the ambient one", async () => {
-  requireReachable(two);
-  // No `wiki/` tree at all: nothing ranked below can come from a disk scan.
-  await expectNoWikiTree(two.root);
-  // The process serves Stack A; the handle names Stack B.
-  bindProcessTo(two.ambient);
-
-  const wiki = createWiki({ root: two.root, env: two.bound.env() });
+  // The process serves Stack A; the handle names Stack B; the root has no `wiki/` tree.
+  const wiki = await handleOnBoundStack(two);
   const pack = (await wiki.getContextPack({ prompt: "alpha" })) as ContextPack;
 
   // The positive half is `alpha-b` present with its own id, title, summary and chunk
