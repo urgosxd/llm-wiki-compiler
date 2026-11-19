@@ -1,6 +1,4 @@
 import { sql } from "drizzle-orm";
-
-import type { ClassificationState, CompatibilityState, SupportState } from "./schema-open-classification.js";
 import {
   boolean,
   check,
@@ -9,13 +7,16 @@ import {
   jsonb,
   pgTable,
   primaryKey,
-  real,
   text,
   timestamp,
   unique,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
+
+// A value import, not a re-export alone: `entity_source_documents` and `entity_pages` below
+// carry a foreign key to this table, and the thunk needs the binding in scope.
+import { ontologyEntities } from "./schema-kg-ontology.js";
 
 /**
  * Drizzle mirror of `db/schema.sql`.
@@ -41,6 +42,13 @@ import {
  * NOT NULL), even though `StackCreate` requires it in the API layer. The
  * schema mirrors the database, which is the source of truth; the strictness
  * decision belongs to the DTO layer (T0.6), not here.
+ *
+ * ## Two tables are re-exported rather than declared here
+ *
+ * `ontology_entities` and `ontology_relationships` are declared in
+ * `schema-kg-ontology.ts` and re-exported at the end of this module's type surface,
+ * so a caller still imports the whole mirror from here. See that module for why the
+ * split exists and for the note on its dependency cycle with this one.
  */
 
 /**
@@ -87,6 +95,28 @@ export type {
   EvidenceKind,
   SupportState,
 } from "./schema-open-classification.js";
+
+/**
+ * The two ontology classes a row can carry.
+ *
+ * Deliberately separate from `ClassificationState`: that vocabulary answers "did a catalog
+ * match this label" and is rewritten by the classifier, while this one answers "did the
+ * ontology accept this claim" and must survive every later classification pass.
+ *
+ * Declared here rather than beside the tables that use it, because `schema.ts` is the module
+ * every caller already imports the mirror from and this name is part of that surface.
+ */
+export type OntologyVerdict = "accepted" | "rejected";
+
+/**
+ * The two knowledge-graph tables live in `schema-kg-ontology.ts`, which is where the ontology
+ * verdict columns that pushed this file past its 400-line cap could be added. They are
+ * re-exported here so the mirror keeps ONE module surface and every existing import path —
+ * including the namespace form `import * as schema from "./schema.js"` — resolves unchanged.
+ *
+ * See that module for why its dependency on this one is a cycle and why the cycle is safe.
+ */
+export { ontologyEntities, ontologyRelationships } from "./schema-kg-ontology.js";
 
 // ---------------------------------------------------------------------------
 // GROUP 1: Stacks
@@ -204,231 +234,6 @@ export const documentChunks = pgTable(
   (t) => [
     unique("unique_chunk_per_doc").on(t.documentId, t.chunkIndex),
     index("idx_chunks_stack").on(t.stackId),
-  ],
-);
-
-/**
- * The two ontology classes a row can carry.
- *
- * Deliberately separate from `ClassificationState`: that vocabulary answers "did a catalog
- * match this label" and is rewritten by the classifier, while this one answers "did the
- * ontology accept this claim" and must survive every later classification pass.
- */
-export type OntologyVerdict = "accepted" | "rejected";
-
-export const ontologyEntities = pgTable(
-  "ontology_entities",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    stackId: uuid("stack_id")
-      .notNull()
-      .references(() => stacks.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    type: text("type").notNull(),
-    description: text("description"),
-    properties: jsonb("properties")
-      .$type<JsonObject>()
-      .default(sql`'{}'::jsonb`),
-    confidence: real("confidence").notNull().default(0.5),
-    verified: boolean("verified").notNull().default(false),
-    lastSeenAt: timestamp("last_seen_at", {
-      withTimezone: true,
-      mode: "string",
-    })
-      .notNull()
-      .defaultNow(),
-    extractedAt: timestamp("extracted_at", {
-      withTimezone: true,
-      mode: "string",
-    })
-      .notNull()
-      .defaultNow(),
-    extractedByModel: text("extracted_by_model"),
-    sourceKind: text("source_kind").default("document"),
-    pipeline: text("pipeline").default("llamaindex-schema-extraction"),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-    // Open-classification columns. `type` above stays the projection/display value;
-    // the catalog decision lives in `canonicalType` and is set only while the state is
-    // `classified` (see the `canonical_type_requires_classified` check).
-    classificationState: text("classification_state").$type<ClassificationState>(),
-    canonicalType: text("canonical_type"),
-    proposedType: text("proposed_type"),
-    supportState: text("support_state").$type<SupportState>(),
-    // Raw classifier output with its original meaning. Never folded into `confidence`.
-    jevChoice: text("jev_choice"),
-    jevConfidence: real("jev_confidence"),
-    jevTopProbability: real("jev_top_probability"),
-    jevModel: text("jev_model"),
-    jevClassifiedAt: timestamp("jev_classified_at", {
-      withTimezone: true,
-      mode: "string",
-    }),
-    catalogVersion: text("catalog_version"),
-    classifierVersion: text("classifier_version"),
-    classificationUpdatedAt: timestamp("classification_updated_at", {
-      withTimezone: true,
-      mode: "string",
-    }),
-    // NOT NULL in SQL. Writers that do not supply one get it derived from `name` by
-    // the `fill_identity_key` trigger, exactly as the backfill derived it.
-    identityKey: text("identity_key").notNull(),
-    // The ontology verdict, on its own axis. It is NOT `classificationState` above: that
-    // column is the catalog-match vocabulary and `persist-classification.ts` UPDATEs it, so
-    // a verdict kept there would be erased. `accepted` is the default because every row
-    // that predates the column WAS accepted — a rejected triplet was never written.
-    ontologyVerdict: text("ontology_verdict")
-      .$type<OntologyVerdict>()
-      .notNull()
-      .default("accepted"),
-    ontologyRejectionReason: text("ontology_rejection_reason"),
-    ontologyOffendingType: text("ontology_offending_type"),
-  },
-  (t) => [
-    unique("unique_identity_per_stack").on(t.stackId, t.identityKey),
-    check(
-      "valid_entity_classification_state",
-      sql`${t.classificationState} is null or ${t.classificationState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
-    ),
-    check(
-      "valid_entity_support_state",
-      sql`${t.supportState} is null or ${t.supportState} in ('supported', 'unsupported', 'uncertain')`,
-    ),
-    check(
-      "canonical_type_requires_classified",
-      sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
-    ),
-    check(
-      "valid_entity_ontology_verdict",
-      sql`${t.ontologyVerdict} in ('accepted', 'rejected')`,
-    ),
-    check(
-      "valid_entity_ontology_rejection_reason",
-      sql`${t.ontologyRejectionReason} is null or ${t.ontologyRejectionReason} in ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN', 'OBJECT_TYPE_NOT_IN_RANGE')`,
-    ),
-    // An equivalence, not two conditions: rejected implies a reason, accepted implies none.
-    check(
-      "ontology_rejection_reason_requires_rejected",
-      sql`(${t.ontologyVerdict} = 'rejected') = (${t.ontologyRejectionReason} is not null)`,
-    ),
-    index("idx_entities_stack").on(t.stackId),
-    index("idx_entities_type").on(t.type),
-    index("idx_entities_stack_name").on(t.stackId, t.name),
-    index("idx_entities_ontology_verdict").on(t.stackId, t.ontologyVerdict),
-  ],
-);
-
-export const ontologyRelationships = pgTable(
-  "ontology_relationships",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    stackId: uuid("stack_id")
-      .notNull()
-      .references(() => stacks.id, { onDelete: "cascade" }),
-    fromEntityId: uuid("from_entity_id")
-      .notNull()
-      .references(() => ontologyEntities.id, { onDelete: "cascade" }),
-    toEntityId: uuid("to_entity_id")
-      .notNull()
-      .references(() => ontologyEntities.id, { onDelete: "cascade" }),
-    type: text("type").notNull(),
-    description: text("description"),
-    confidence: real("confidence").notNull().default(0.5),
-    verified: boolean("verified").notNull().default(false),
-    extractedAt: timestamp("extracted_at", {
-      withTimezone: true,
-      mode: "string",
-    })
-      .notNull()
-      .defaultNow(),
-    extractedByModel: text("extracted_by_model"),
-    sourceKind: text("source_kind").default("document"),
-    pipeline: text("pipeline").default("llamaindex-schema-extraction"),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-    // The immutable original predicate. `type` above keeps its projection meaning, so a
-    // predicate nobody could map ("deja sin efecto") survives instead of collapsing.
-    predicate: text("predicate"),
-    canonicalType: text("canonical_type"),
-    classificationState: text("classification_state").$type<ClassificationState>(),
-    supportState: text("support_state").$type<SupportState>(),
-    compatibility: text("compatibility").$type<CompatibilityState>(),
-    jevChoice: text("jev_choice"),
-    jevConfidence: real("jev_confidence"),
-    jevTopProbability: real("jev_top_probability"),
-    jevModel: text("jev_model"),
-    jevClassifiedAt: timestamp("jev_classified_at", {
-      withTimezone: true,
-      mode: "string",
-    }),
-    catalogVersion: text("catalog_version"),
-    classifierVersion: text("classifier_version"),
-    classificationUpdatedAt: timestamp("classification_updated_at", {
-      withTimezone: true,
-      mode: "string",
-    }),
-    identityKey: text("identity_key").notNull(),
-    // The same verdict axis as `ontologyEntities` above, on the edge's own row.
-    ontologyVerdict: text("ontology_verdict")
-      .$type<OntologyVerdict>()
-      .notNull()
-      .default("accepted"),
-    ontologyRejectionReason: text("ontology_rejection_reason"),
-    ontologyOffendingType: text("ontology_offending_type"),
-  },
-  (t) => [
-    // KEPT as well as the identity-key constraint: two consolidators infer their upsert
-    // target from `on conflict (stack_id, from_entity_id, to_entity_id, type)`, and
-    // dropping the constraint that backs those columns breaks every re-ingest.
-    unique("unique_edge_per_stack").on(
-      t.stackId,
-      t.fromEntityId,
-      t.toEntityId,
-      t.type,
-    ),
-    unique("unique_edge_identity_per_stack").on(
-      t.stackId,
-      t.fromEntityId,
-      t.toEntityId,
-      t.identityKey,
-    ),
-    check(
-      "valid_relationship_classification_state",
-      sql`${t.classificationState} is null or ${t.classificationState} in ('classified', 'free_no_match', 'free_uncertain', 'pending', 'failed')`,
-    ),
-    check(
-      "valid_relationship_support_state",
-      sql`${t.supportState} is null or ${t.supportState} in ('supported', 'unsupported', 'uncertain')`,
-    ),
-    check(
-      "valid_relationship_compatibility",
-      sql`${t.compatibility} is null or ${t.compatibility} in ('compatible', 'conflict', 'indeterminate')`,
-    ),
-    check(
-      "canonical_type_requires_classified",
-      sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
-    ),
-    check(
-      "valid_relationship_ontology_verdict",
-      sql`${t.ontologyVerdict} in ('accepted', 'rejected')`,
-    ),
-    check(
-      "valid_relationship_ontology_rejection_reason",
-      sql`${t.ontologyRejectionReason} is null or ${t.ontologyRejectionReason} in ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN', 'OBJECT_TYPE_NOT_IN_RANGE')`,
-    ),
-    check(
-      "ontology_rejection_reason_requires_rejected",
-      sql`(${t.ontologyVerdict} = 'rejected') = (${t.ontologyRejectionReason} is not null)`,
-    ),
-    index("idx_rels_stack").on(t.stackId),
-    index("idx_rels_from").on(t.fromEntityId),
-    index("idx_rels_to").on(t.toEntityId),
-    index("idx_rels_ontology_verdict").on(t.stackId, t.ontologyVerdict),
   ],
 );
 
