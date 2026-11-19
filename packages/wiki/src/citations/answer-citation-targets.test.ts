@@ -13,15 +13,16 @@
  *   same qualified id, which is exactly the form reported in production.
  * - `recognizedWikilinkTargets` normalizes every wikilink target before resolution
  *   (`packages/wiki/src/wiki/wikilink-tokens.ts:53` -> `normalizeWikilinkTarget` at
- *   `:69`), which keeps a qualified namespace and slugifies ONLY the page part:
+ *   `:77`), which keeps a qualified namespace and slugifies ONLY the page part:
  *   `slugify` (`packages/wiki/src/utils/markdown.ts:69-77`) deletes `/` because `/`
  *   matches `[^\p{L}\p{N}\s-]`, so slugifying the whole target would lose the
  *   namespace entirely.
  * - `classifyAnswerCitations` resolves that normalized target through
  *   `packages/wiki/src/citations/answer-report.ts:20` -> `resolveBareSlug`
  *   (`packages/wiki/src/viewer/collect.ts:72`), which honors a namespace on a
- *   qualified target (`:82`) and compares BOTH sides of a bare slug after
- *   normalization (`:125`), because the stored `slug` is the RAW filename stem.
+ *   qualified target (`:82`) and matches a bare slug against the RAW filename stem
+ *   both exactly and slugified, exact first (`findPageInDirectory`, `:129`), because
+ *   the stored `slug` is the RAW filename stem.
  *
  * Every case below drives that production chain — real page files on disk, then
  * `collectAnswerCitationIndex`, then `reportAnswerCitations`. No target string is
@@ -39,7 +40,7 @@ import path from "node:path";
 import { collectAnswerCitationIndex } from "./answer-index.js";
 import { reportAnswerCitations } from "./answer-report.js";
 import type { RetainedCitationTarget } from "./answer-types.js";
-import { collectViewerPages } from "../viewer/collect.js";
+import { collectViewerPages, resolveBareSlug } from "../viewer/collect.js";
 import { registerWikilink } from "../viewer/wikilink-rule.js";
 import type { ViewerPage } from "../viewer/types.js";
 
@@ -49,18 +50,28 @@ afterEach(async () => {
   while (created.length > 0) await fs.rm(created.pop() as string, { recursive: true, force: true });
 });
 
+/** Write one or more pages under one `wiki/<directory>/` and return the shared root. */
+async function stackWithPages(
+  directory: "concepts" | "queries",
+  pages: ReadonlyArray<{ stem: string; body?: string }>,
+): Promise<string> {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "answer-citation-targets-")));
+  created.push(root);
+  for (const page of pages) {
+    const file = path.join(root, "wiki", directory, `${page.stem}.md`);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, `---\ntitle: "${page.stem}"\n---\n\n${page.body ?? `The body of ${page.stem}.`}\n`);
+  }
+  return root;
+}
+
 /** Write `stem` under `wiki/<directory>/` as a real page and return the project root. */
 async function stackWithPage(
   directory: "concepts" | "queries",
   stem: string,
-  body: string = `The body of ${stem}.`,
+  body?: string,
 ): Promise<string> {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "answer-citation-targets-")));
-  created.push(root);
-  const file = path.join(root, "wiki", directory, `${stem}.md`);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, `---\ntitle: "${stem}"\n---\n\n${body}\n`);
-  return root;
+  return stackWithPages(directory, [{ stem, ...(body === undefined ? {} : { body }) }]);
 }
 
 /** The retained identity the production index minted for one page, or a readable failure. */
@@ -100,7 +111,7 @@ describe("a citation naming an existing page by its own qualified identity", () 
 
 describe("a citation whose stored stem is not already a slug", () => {
   // Page identity keeps the RAW filename stem (answer-index.ts:33), while the body
-  // target is slugified before resolution (wikilink-tokens.ts:52). A page authored or
+  // target is slugified before resolution (wikilink-tokens.ts:53). A page authored or
   // migrated with a title-shaped stem is therefore cited by its own title in a form
   // that can never equal its stored identity. No `/` is involved in this case, which
   // is what separates it from the separator loss above.
@@ -162,9 +173,62 @@ describe("the viewer link graph of a body citing a page by its qualified identit
     const page = (await collectViewerPages(root)).find((candidate) => candidate.slug === "test2");
 
     // `queries/test2` names no page in this stack, so it stays dangling — while the
-    // separator-mangled `conceptstest2` may not appear anywhere.
+    // separator-mangled `conceptstest2` may not appear anywhere. `danglingLinks` is
+    // OPTIONAL on `ViewerPage`, so it is read as defined-or-empty here.
     expect(page?.outgoingLinks).toEqual(["concepts/test2"]);
-    expect(page?.danglingLinks.map((link) => link.slug)).toEqual(["queries/test2"]);
+    expect((page?.danglingLinks ?? []).map((link) => link.slug)).toEqual(["queries/test2"]);
+  });
+});
+
+/** Resolve one citation over a two-page stack and return the page id it reached. */
+async function resolveOverAmbiguousStack(stems: string[], citation: string): Promise<string | null> {
+  const root = await stackWithPages("concepts", stems.map((stem) => ({ stem })));
+  const report = await reportAnswerCitations(root, `Grounded in [[${citation}]].`);
+  const [first] = report.citations;
+  return first?.status === "resolved" ? first.pageId : null;
+}
+
+/**
+ * A cited slug that BOTH an exact-stem page and a title-shaped page answer.
+ *
+ * Creation order is readdir order on the filesystems this suite runs on, so both
+ * orders are separate cases: neither assertion may depend on which file the scan
+ * met first.
+ */
+describe("an ambiguous bare citation between an exact stem and a title-shaped stem", () => {
+  const orders = [
+    { label: "title-shaped page written first", stems: ["7. Subdominios DDD", "7-subdominios-ddd"] },
+    { label: "exact-stem page written first", stems: ["7-subdominios-ddd", "7. Subdominios DDD"] },
+  ];
+
+  it.each(orders)("prefers the exact stem when the $label", async ({ stems }) => {
+    expect(await resolveOverAmbiguousStack(stems, "7-subdominios-ddd")).toBe("concepts/7-subdominios-ddd");
+  });
+
+  // The disk cases depend on which file the scan met first, and a filesystem that
+  // yields the title-shaped page first would hide the defect. This case fixes the
+  // index order explicitly, so the precedence is proven rather than observed.
+  it("prefers the exact stem in EITHER index order", () => {
+    // Typed through the resolver's own parameter, so the literal entries cannot widen
+    // `pageDirectory` to `string` — and no assertion or cast is needed to fit them.
+    type Index = Parameters<typeof resolveBareSlug>[1];
+    const pages: Index = [
+      { id: "concepts/7. Subdominios DDD", pageDirectory: "concepts", slug: "7. Subdominios DDD" },
+      { id: "concepts/7-subdominios-ddd", pageDirectory: "concepts", slug: "7-subdominios-ddd" },
+    ];
+
+    // Exact-stem page LAST (the order a scan may well not produce) and first.
+    expect(resolveBareSlug("7-subdominios-ddd", pages)).toBe("concepts/7-subdominios-ddd");
+    expect(resolveBareSlug("7-subdominios-ddd", [...pages].reverse())).toBe("concepts/7-subdominios-ddd");
+  });
+
+  it.each(orders)("resolves the title-shaped citation deterministically ($label)", async ({ stems }) => {
+    // Both spellings normalize to the SAME target (`7-subdominios-ddd` once slugified),
+    // so by the time resolution runs the title-shaped citation is indistinguishable
+    // from the bare slug and takes the same exact-stem winner. Determinism is what is
+    // guaranteed here; preferring the title-shaped page would need the RAW target,
+    // which the tokenizer does not carry into resolution.
+    expect(await resolveOverAmbiguousStack(stems, "7. Subdominios DDD")).toBe("concepts/7-subdominios-ddd");
   });
 });
 

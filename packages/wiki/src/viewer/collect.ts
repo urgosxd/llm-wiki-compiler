@@ -88,7 +88,7 @@ function resolveQualifiedSlug(
   // the two DEFAULT namespaces are addressable here.
   if (namespace !== "concepts" && namespace !== "queries") return null;
   if (pagePartSlug.length === 0) return null;
-  const page = pages.find((p) => p.pageDirectory === namespace && matchesPageSlug(p, pagePartSlug));
+  const page = findPageInDirectory(pages, namespace, pagePartSlug);
   return page ? defaultPageId(namespace, page) : null;
 }
 
@@ -98,9 +98,9 @@ function resolveUnqualifiedSlug(
   pages: ReadonlyArray<PageIndexEntry>,
 ): PageId | null {
   if (slug.length === 0) return null;
-  const concept = pages.find((p) => p.pageDirectory === "concepts" && matchesPageSlug(p, slug));
+  const concept = findPageInDirectory(pages, "concepts", slug);
   if (concept) return defaultPageId("concepts", concept);
-  const query = pages.find((p) => p.pageDirectory === "queries" && matchesPageSlug(p, slug));
+  const query = findPageInDirectory(pages, "queries", slug);
   if (query) return defaultPageId("queries", query);
   // Alias fallback: a page whose declared aliases slugify to this target. An
   // exact slug match always wins (above) so a real page is never shadowed by
@@ -113,17 +113,27 @@ function resolveUnqualifiedSlug(
 }
 
 /**
- * True when `page` is addressed by the tokenizer-normalized `target`.
+ * Find the page in `directory` that `target` addresses, EXACT stem match first.
  *
  * A page's `slug` is its RAW filename stem (`wiki/collect.ts` keeps it verbatim,
- * deliberately), while a wikilink target is slugified, so BOTH sides are
- * normalized here: a title-shaped stem (`7. Subdominios DDD`) is reachable by
- * the slug a citation of it produces (`7-subdominios-ddd`). An already-slug
- * stem matches on the first comparison, so slug-shaped pages resolve exactly as
- * they did before.
+ * deliberately), while a wikilink target is slugified, so both directions must be
+ * compared to reach a title-shaped stem (`7. Subdominios DDD`) by the slug a
+ * citation of it produces (`7-subdominios-ddd`).
+ *
+ * The two passes make that deterministic: when BOTH a page named exactly
+ * `7-subdominios-ddd` and a page named `7. Subdominios DDD` exist, the target names
+ * the first one literally, so it wins. A single combined pass would return
+ * whichever page the scan yielded first, making the resolved identity depend on
+ * directory read order.
  */
-function matchesPageSlug(page: PageIndexEntry, target: string): boolean {
-  return page.slug === target || slugify(page.slug) === target;
+function findPageInDirectory(
+  pages: ReadonlyArray<PageIndexEntry>,
+  directory: "concepts" | "queries",
+  target: string,
+): PageIndexEntry | undefined {
+  const candidates = pages.filter((p) => p.pageDirectory === directory);
+  return candidates.find((p) => p.slug === target)
+    ?? candidates.find((p) => slugify(p.slug) === target);
 }
 
 /**
