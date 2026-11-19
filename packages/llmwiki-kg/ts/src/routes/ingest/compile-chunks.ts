@@ -73,7 +73,7 @@ import { CLASSIFIER_VERSION, classifySpans, stateCounts } from "./classify-stage
 import type { ClassificationOutcome, ClassificationRuntime } from "./classify-stage.js";
 import { persistClassification } from "./persist-classification.js";
 import type { ChunkResult, ExtractionResult } from "../../core/extraction-types.js";
-import type { ExtractionOptions } from "../../core/graph-extraction.js";
+import type { ExtractionContract, ExtractionOptions, ExtractionOutcome } from "../../core/graph-extraction.js";
 import { deriveIdentityKey } from "../../core/identity/key.js";
 import { reportedBaseUrl } from "../../core/jev/redact.js";
 import { resolveIdentities } from "../../core/identity/resolve.js";
@@ -304,12 +304,16 @@ async function extractAndSynthesize(
   chunks: readonly CompileChunk[],
   document: DocumentRow,
 ): Promise<ProcessedIngest> {
-  const extraction = await extractGraphFromChunks(
+  const extracted = await extractGraphFromChunks(
     extractionChunks(chunks),
     document.stack_name,
     ontologyArgument(document.stack_ontology),
     extractionOptions(params),
   );
+  // Admission is applied HERE, on what the extraction produced, rather than in the
+  // extractor: the contract is a property of this request, and this is the seam that
+  // turns an extraction into this document's rows.
+  const extraction = admittedExtraction(extracted, params.ontologyContract);
   const shouldSynthesize = params.synthesizeDescriptions ?? document.stack_synthesize_default;
   if (shouldSynthesize) {
     await synthesizeEntityDescriptions(extraction, extractionChunks(chunks));
@@ -324,6 +328,49 @@ async function extractAndSynthesize(
     ontologyAudit: buildOntologyAudit(declared, extraction.rejected ?? []),
     ...(extractionAudit === undefined ? {} : { extractionAudit }),
     ...(openAudit === undefined ? {} : { openAudit }),
+  };
+}
+
+/**
+ * What the requested admission contract lets into the graph.
+ *
+ * ## STRICT WINS over the two-class default
+ *
+ * `?ontology_contract=strict` is an explicit opt-in to a CLOSED graph, so a caller who
+ * asked for it must not receive rows the ontology refused as a side effect of a feature
+ * it never invoked — the closed contract is the contract, and the two-class default is
+ * only what a caller who did not ask for anything closed gets.
+ *
+ * So under `strict` every refused row is removed before anything is written, while the
+ * extraction's own `rejected` report is kept untouched: the document's `audit.ontology`
+ * still counts what the ontology turned away, because counting a refusal and writing a
+ * row for it are two different questions (S6).
+ *
+ * `open` — the default — removes nothing, and refuses nothing for the declaration's sake:
+ * the catalog ORIENTS an open run, so the same input reaches the graph as an admitted row
+ * with its `audit.open` mismatch recorded beside it, never as a refused one. The `rejected`
+ * class this filter reads is produced by the enforcing side of `rejectTriplet`, which the
+ * endpoint reaches only through `strict`.
+ *
+ * The verdict itself is NOT re-decided here: `rejectTriplet` and the four checks that
+ * produce these classes are untouched (S9). This function only removes what they already
+ * refused, and only when the caller asked for that.
+ *
+ * @param extraction - What the provider stage produced, every row carrying its class.
+ * @param contract - The admission contract this request selected.
+ * @returns The same extraction on `open`; on `strict`, one without any refused row.
+ */
+function admittedExtraction(
+  extraction: ExtractionOutcome,
+  contract: ExtractionContract,
+): ExtractionOutcome {
+  if (contract !== "strict") return extraction;
+  return {
+    ...extraction,
+    entities: extraction.entities.filter((entity) => entity.ontologyVerdict !== "rejected"),
+    relationships: extraction.relationships.filter(
+      (relationship) => relationship.ontologyVerdict !== "rejected",
+    ),
   };
 }
 
