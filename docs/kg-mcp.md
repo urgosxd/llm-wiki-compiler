@@ -87,6 +87,61 @@ surface yields it. A duplicated name in one `tools/list` is a defect — the cli
 tell which implementation answers — so the exclusion happens at the source rather than by
 de-duplicating the reply.
 
+## Every graph tool's position on the ontology's two classes
+
+A graph row carries an `ontology_verdict` (`accepted` or `rejected`, the `CHECK` at
+`packages/llmwiki-kg/db/schema.sql:479-482` and `:507-509`), both classes are returned by
+default, and every tool states its position on that distinction. Silence is the defect
+this section closes: the three tools that return graph content carry `accepted_only`, and
+the one that does not says why.
+
+| Tool | `accepted_only` in the advertised `inputSchema` | Forwarded as | Position |
+| --- | --- | --- | --- |
+| `query_stack` | `"type": "boolean"`, `default: false` (`packages/llmwiki-kg/ts/src/mcp/tools.ts:136-140`) | the `accepted_only` field of the `POST /aks/v1/context` body (`packages/llmwiki-kg/ts/src/mcp/handlers.ts:399-401`) | carries it |
+| `traverse_stack` | same (`packages/llmwiki-kg/ts/src/mcp/tools.ts:175-179`) | `?accepted_only=` on `GET /aks/v1/traverse` (`packages/llmwiki-kg/ts/src/mcp/handlers.ts:478-480`) | carries it |
+| `get_entities` | same (`packages/llmwiki-kg/ts/src/mcp/tools.ts:214-218`) | `?accepted_only=` on `GET /aks/v1/entities` (`packages/llmwiki-kg/ts/src/mcp/handlers.ts:517-519`) | carries it |
+| `list_stacks` | absent (`packages/llmwiki-kg/ts/src/mcp/tools.ts:227-242` is its whole schema) | — | excluded, with the projection that decides it |
+
+All three descriptions are one string, `ACCEPTED_ONLY_DESCRIPTION`
+(`packages/llmwiki-kg/ts/src/mcp/tools.ts:61-64`), so the wording cannot drift between
+the tools, and every graph tool's description carries `ONTOLOGY_CLASS_DISCLOSURE`
+(`:44-51`): rejected items are present by default, one argument removes them, and a
+rejected item is marked as such in the rendered text.
+
+**The schema is advice; the handler is the guard.** `inputSchema` cannot enforce a
+`"type": "boolean"`, and a model hands over `"false"` as text — which a truthiness test
+reads as true. A present-but-non-boolean argument is therefore refused before any
+request is built, with `Error: 'accepted_only' must be a boolean.`
+(`packages/llmwiki-kg/ts/src/mcp/handlers.ts:68`, the refusal at `:76-79`, called from
+`:391`, `:462` and `:501`). An **absent** argument is not a refusal: it is the wide
+default, and only a present one is forwarded, so a caller that omits it inherits the
+route's own default instead of a value the tool invented.
+
+**The class of a refused edge is not in the AKS payload**, so `query_stack` resolves
+refused edges from the Stack's graph projection when `accepted_only` is not `true`, and
+appends `UNRESOLVED_CLASS_DISCLOSURE` when that resolution was incomplete
+(`packages/llmwiki-kg/ts/src/mcp/handlers.ts:420-440`,
+`packages/llmwiki-kg/ts/src/mcp/format.ts:49-52`). With `accepted_only: true` the second
+read is not paid for at all, because every refused edge is already gone upstream.
+
+**`list_stacks` has no `accepted_only`, and the projection is the reason.** The listing
+is the `stacks` table — `STACK_COLUMNS` at `packages/llmwiki-kg/ts/src/routes/stacks.ts:66-67`,
+the ordered select at `:390-396` — and a `stacks` row carries the Stack's *declaration*
+plus its own metadata. The verdicts live per row in `ontology_entities` and
+`ontology_relationships` (`packages/llmwiki-kg/db/schema.sql:403-404`, `:424-425`), so a
+Stack listing has no class to narrow. The argument is absent rather than accepted and
+ignored, and this is the same implementation the union yields
+([above](#the-union-17-tools-and-list_stacks-answered-by-the-wiki)).
+
+Two graph surfaces are not MCP tools and keep their own positions, both stated at their
+own declaration rather than inherited: `GET /domain/kg/stacks/{stackId}/graph` defaults to
+`false` (`packages/llmwiki-kg/ts/src/routes/stack_graph.ts:119`), and
+`GET /aks/v1/export` defaults to **`true`**
+(`packages/llmwiki-kg/ts/src/routes/aks/query-params.ts:160`) — the one surface whose
+default differs, because the vendored AKS 0.1.0 relationship object is closed and cannot
+carry the class, so a bundle holds the accepted class unless the caller asks for
+everything.
+
 ## One `/mcp`, one auth policy, and the operator consequence
 
 A single endpoint cannot carry two policies, so the one `/mcp` carries the graph's:

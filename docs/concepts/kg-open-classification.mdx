@@ -92,9 +92,13 @@ Two rules follow, and the code enforces both:
 `POST /stacks/:stackId/documents/:docId/ingest` runs these stages in this order
 (`packages/llmwiki-kg/ts/src/routes/ingest/pipeline.ts`):
 
-1. **Extract candidates.** Chunk, embed, and extract under the open contract:
-   names, proposed types and predicates are discovered whether or not the catalog
-   declares them. Entities with no relations are admitted.
+1. **Extract candidates.** Chunk, embed, and extract under the contract the caller
+   named: `open` — the default, taken when `?ontology_contract=` is omitted — discovers
+   names, proposed types and predicates whether or not the catalog declares them,
+   while `strict` and `persist` run the enforcing classifier over those same candidates
+   and differ only in what they do with the triplets it turns away
+   ([Stack ontology](/configuration/stack-ontology#choosing-the-admission-contract)).
+   Entities with no relations are admitted either way.
 2. **Verify evidence.** Each quoted span is located in the stored chunk with
    character offsets, and an unlocatable quote is recorded with null offsets rather
    than dropped.
@@ -313,8 +317,9 @@ publishes no block at all — a hollow block would be a claim nobody made.
 The read path treats a free item as an ordinary graph member:
 
 - **No filter returns both kinds.** `GET /aks/v1/entities`, `GET /aks/v1/context`
-  and the traversal endpoint carry no classification predicate, so free nodes and
-  free edges are returned and walked like any other.
+  and the traversal endpoint carry no catalog-classification predicate, so free nodes
+  and free edges are returned and walked like any other. Whether the ontology accepted
+  or refused an item is a second, independent axis with its own argument, below.
 - **`?type=` names a canonical type**, so it returns only items the catalog
   classified that way — plus rows with no recorded decision, whose label always
   answered that filter. A free entity whose proposal happens to read `Role` is not a
@@ -336,3 +341,56 @@ A generated page and a synthesized description state the same thing to their rea
 for an entity that is not confirmed classified, the synthesis prompt gains a
 `CLASSIFICATION:` line naming the real state, and classified pages are byte-identical
 to before.
+
+## Reading a graph that holds both ontology classes
+
+`classification_state` answers what the catalog's classifier decided about a row.
+`ontology_verdict` answers a different question: what the Stack's own declaration
+decided — `accepted`, or `rejected` with an `ontology_rejection_reason` and the
+offending type. The two are taken independently, so a row can be classified and still
+be refused: the catalog asks which type fits a candidate, and the declaration asks
+whether that type may appear there at all. The reason a refusal records is one of
+`UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`, `SUBJECT_TYPE_NOT_IN_DOMAIN` or
+`OBJECT_TYPE_NOT_IN_RANGE`.
+
+The class is decided per endpoint, never per triplet: one refusal names one offending
+type, so the endpoint that carries it is `rejected` while the other endpoint of the same
+triplet can stay `accepted`. A refused relation stores its own `rejected` row either way.
+
+`persist` stores both classes (see
+[Choosing the admission contract](/configuration/stack-ontology#choosing-the-admission-contract)).
+Every read surface returns **both** of them by default, and one argument narrows a read
+back to the accepted class:
+
+| Surface | `accepted_only` default |
+| --- | --- |
+| `GET /aks/v1/entities` | `false` |
+| `GET /aks/v1/entities/{name}` | `false` |
+| `GET /aks/v1/traverse` | `false` |
+| `POST /aks/v1/context` | `false` |
+| `GET /aks/v1/export` | **`true`** — the only surface that differs |
+
+- **`accepted_only` is a boolean, and a value that cannot mean either boolean is
+  refused.** `?accepted_only=maybe` answers `422` instead of being coerced, because
+  `"false"` is true under JavaScript truthiness: a silent narrowing is the one answer a
+  caller must not receive by accident.
+- **A refused item says so wherever the class has a place to live.** An entity publishes
+  it as `properties.ontology_classification`; a traversal step carries
+  `ontology_classification` beside the edge it describes. A relationship inside an AKS
+  payload cannot — that object is closed, which is the reason a bundle's refused edge
+  arrives unmarked.
+- **The export's `true` is a decision, not an inconsistency.** A bundle is validated
+  against the vendored AKS 0.1.0 contract, whose relationship object is closed and has
+  no field or properties map in which to publish a class. Returning both classes by
+  default would hand refused edges to the consumer least able to notice them, so the
+  default is the accepted class and `?accepted_only=false` opts into the rest. The
+  asymmetry follows from what each surface is able to mark, not from a different notion
+  of validity.
+- **The graph MCP tools carry the same argument**, under the same name, polarity and
+  default: `query_stack`, `traverse_stack` and `get_entities` accept `accepted_only`
+  and return both classes unless it is `true`. `list_stacks` has no such argument, and
+  cannot have one: it lists Stacks, whose rows come from the `stacks` table and carry no
+  ontology verdict, so there is no class on that surface to narrow.
+
+Narrowing a read changes the answer, never the graph: the refused rows stay stored, and
+`accepted_only` removes them from one response rather than from the Stack.
