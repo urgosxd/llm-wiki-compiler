@@ -91,6 +91,13 @@ export const CLASSIFICATION_STATE_FILTERS = [
  * `Literal[...]` query parameter; an empty value (`?classification_state=`) is a
  * present-but-unparseable value and is refused the same way. `type` keeps its
  * truthiness rule (empty means "no filter") because that is what it always did.
+ *
+ * `accepted_only` is declared LAST for the same reason `classification_state` is:
+ * it is an addition, and appending it keeps the order in which a multi-parameter 422
+ * reports its entries unchanged for every parameter that came before. It is parsed
+ * by the one boolean primitive the contract already uses (`verified_only` on the
+ * export), so the textual forms it accepts are the same ones — and a value that
+ * cannot mean either boolean is refused rather than guessed.
  */
 export const EntitiesQuery = z.object({
   stackId: pydanticUuid().nullable().default(null),
@@ -99,6 +106,7 @@ export const EntitiesQuery = z.object({
   min_confidence: pydanticFloat({ ge: 0, le: 1 }).default(0),
   limit: pydanticInt({ ge: 1, le: 1000 }).default(100),
   classification_state: z.enum(CLASSIFICATION_STATE_FILTERS).nullable().default(null),
+  accepted_only: pydanticBoolean().default(false),
 });
 
 /** Query schema for `GET /aks/v1/entities/{name}`. */
@@ -116,6 +124,7 @@ export const TraverseQuery = z.object({
   domain: pydanticString().nullable().default(null),
   max_depth: pydanticInt({ ge: 1, le: 5 }).default(2),
   relationship_types: pydanticString().nullable().default(null),
+  accepted_only: pydanticBoolean().default(false),
 });
 
 /** Query schema for `GET /aks/v1/export`. */
@@ -140,9 +149,17 @@ export const ENTITIES_QUERY_KEYS = [
   "min_confidence",
   "limit",
   "classification_state",
+  "accepted_only",
 ] as const;
 export const ENTITY_QUERY_KEYS = ["stackId", "domain"] as const;
-export const TRAVERSE_QUERY_KEYS = ["start", "stackId", "domain", "max_depth", "relationship_types"] as const;
+export const TRAVERSE_QUERY_KEYS = [
+  "start",
+  "stackId",
+  "domain",
+  "max_depth",
+  "relationship_types",
+  "accepted_only",
+] as const;
 export const EXPORT_QUERY_KEYS = [
   "stackId",
   "domain",

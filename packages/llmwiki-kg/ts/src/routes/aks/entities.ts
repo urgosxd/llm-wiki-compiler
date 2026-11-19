@@ -40,6 +40,11 @@ import {
  *
  * With neither filter the answer holds both kinds: a free entity is an ordinary
  * graph member, not a quarantine.
+ *
+ * `accepted_only` is neither of those: it asks about the ONTOLOGY's verdict, not
+ * about the catalog. Its default is wide — an entity the ontology refused is
+ * returned like any other — so a caller who wants only what the ontology vouched
+ * for has to say so.
  */
 export async function listEntities(req: Request, res: Response, tx: Database): Promise<void> {
   const raw = readQuery(req, ENTITIES_QUERY_KEYS);
@@ -56,6 +61,7 @@ export async function listEntities(req: Request, res: Response, tx: Database): P
     min_confidence: minConfidence,
     limit,
     classification_state: classificationState,
+    accepted_only: acceptedOnly,
   } = query.data;
 
   // The query itself lives in `core/graph_read.ts` so a non-HTTP caller (the `kg`
@@ -67,6 +73,7 @@ export async function listEntities(req: Request, res: Response, tx: Database): P
     minConfidence,
     limit,
     classificationState,
+    acceptedOnly,
   });
   if (!result.ok) {
     sendApiError(res, toApiError(result.error));

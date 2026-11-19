@@ -33,6 +33,32 @@ const OPTIONAL_DOMAIN_DESCRIPTION =
   "Optional domain slug of the Stack, forwarded alongside stackId as an additional filter; it never replaces stackId.";
 
 /**
+ * The disclosure every graph tool carries about the ontology's two classes.
+ *
+ * Both halves are mandatory and they travel together: the default is WIDE — a
+ * relationship the ontology refused is stored and returned like any other — so a
+ * client that reads no further must still be told that rejected items are there
+ * AND that one argument removes them. A wide default nobody announced is a trap;
+ * a flag nobody announced is not an escape hatch.
+ */
+const ONTOLOGY_CLASS_DISCLOSURE =
+  "Ontology-rejected items are present by default." +
+  " Pass accepted_only: true to remove them.";
+
+/**
+ * How every graph tool describes `accepted_only`.
+ *
+ * Named for what turning it ON does, which is the direction the human stated: the
+ * default includes both classes and this narrows to the accepted ones. The type is
+ * stated plain `boolean`, with no textual coercion: a client that passes the string
+ * `"false"` would otherwise have it read as true.
+ */
+const ACCEPTED_ONLY_DESCRIPTION =
+  "Optional boolean (default false). Rejected items are present by default;" +
+  " set this to true to return accepted items only. A value that is not a boolean" +
+  " is refused.";
+
+/**
  * The `limit` description `list_stacks` advertises, worded once.
  *
  * Byte-identical to the wiki dimension's, because the two `list_stacks` tools share
@@ -80,7 +106,8 @@ export const MCP_TOOLS: readonly Tool[] = [
   {
     name: "query_stack",
     description:
-      "Run a natural-language query against a compiled AKS Knowledge Stack. Returns the relevant entities, their relationships, the reasoning the model used to select them, and a confidence rating. Use this when you need to find domain knowledge by description, not by exact entity name.",
+      "Run a natural-language query against a compiled AKS Knowledge Stack. Returns the relevant entities, their relationships, the reasoning the model used to select them, and a confidence rating. Use this when you need to find domain knowledge by description, not by exact entity name. " +
+      ONTOLOGY_CLASS_DISCLOSURE,
     inputSchema: {
       type: "object",
       properties: {
@@ -101,6 +128,11 @@ export const MCP_TOOLS: readonly Tool[] = [
           description: "Maximum number of entities to return (default 8)",
           default: 8,
         },
+        accepted_only: {
+          type: "boolean",
+          description: ACCEPTED_ONLY_DESCRIPTION,
+          default: false,
+        },
       },
       required: ["query", "stackId"],
     },
@@ -108,7 +140,8 @@ export const MCP_TOOLS: readonly Tool[] = [
   {
     name: "traverse_stack",
     description:
-      "Traverse a Knowledge Stack starting from a named entity, following typed relationships up to max_depth hops away. Returns the chain of relationships found. Use this when you know the starting entity and want to explore its neighborhood in the graph.",
+      "Traverse a Knowledge Stack starting from a named entity, following typed relationships up to max_depth hops away. Returns the chain of relationships found. Use this when you know the starting entity and want to explore its neighborhood in the graph. " +
+      ONTOLOGY_CLASS_DISCLOSURE,
     inputSchema: {
       type: "object",
       properties: {
@@ -134,6 +167,11 @@ export const MCP_TOOLS: readonly Tool[] = [
           description:
             "Optional comma-separated list of relationship types to follow (e.g. 'requires,triggers')",
         },
+        accepted_only: {
+          type: "boolean",
+          description: ACCEPTED_ONLY_DESCRIPTION,
+          default: false,
+        },
       },
       required: ["start", "stackId"],
     },
@@ -141,7 +179,8 @@ export const MCP_TOOLS: readonly Tool[] = [
   {
     name: "get_entities",
     description:
-      "List the compiled entities in a Knowledge Stack, with optional filtering by type and confidence threshold. Use this for inventory questions like 'what does this Stack know about?' or to find entities by type.",
+      "List the compiled entities in a Knowledge Stack, with optional filtering by type and confidence threshold. Use this for inventory questions like 'what does this Stack know about?' or to find entities by type. " +
+      ONTOLOGY_CLASS_DISCLOSURE,
     inputSchema: {
       type: "object",
       properties: {
@@ -166,6 +205,11 @@ export const MCP_TOOLS: readonly Tool[] = [
           type: "integer",
           description: "Maximum entities to return (default 100, max 1000)",
           default: 100,
+        },
+        accepted_only: {
+          type: "boolean",
+          description: ACCEPTED_ONLY_DESCRIPTION,
+          default: false,
         },
       },
       required: ["stackId"],

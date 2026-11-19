@@ -56,6 +56,13 @@ import { TRAVERSE_QUERY_KEYS, TraverseQuery, readQuery } from "./query-params.js
  * whose label always answered it) and never with a free edge whose stored label
  * merely looks canonical.
  *
+ * ## A rejected edge is walked unless the caller says otherwise
+ *
+ * The ontology's verdict is not a state: an edge it refused is stored and returned
+ * like any other, so by default the walk CROSSES it and the neighbour beyond it is
+ * reachable. `accepted_only=true` removes those edges from the recursion, which
+ * changes the reachable set rather than merely the projected steps.
+ *
  * ## Why this response carries no classification state
  *
  * `AKSTraverseStep` is a closed AKS model — `from_entity`, `relationship`,
@@ -78,6 +85,7 @@ export async function traverse(req: Request, res: Response, tx: Database): Promi
     domain,
     max_depth: maxDepth,
     relationship_types: relationshipTypes,
+    accepted_only: acceptedOnly,
   } = query.data;
 
   // The walk lives in `core/graph_read.ts`, so MCP and the `kg` dimension can
@@ -88,6 +96,7 @@ export async function traverse(req: Request, res: Response, tx: Database): Promi
     domain,
     maxDepth,
     relationshipTypes,
+    acceptedOnly,
   });
   if (!result.ok) {
     sendApiError(res, toApiError(result.error));

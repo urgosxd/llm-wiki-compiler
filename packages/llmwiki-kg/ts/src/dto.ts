@@ -443,6 +443,10 @@ export const AKSContextRequest = z.object({
   // Field(default=8, ge=1, le=50) — the bounds are inclusive on both ends.
   max_entities: pydanticInt({ ge: 1, le: 50 }).default(8),
   include_relationships: pydanticBoolean().default(true),
+  // Declared LAST, so the order in which a multi-field 422 reports its entries is
+  // unchanged for every field the oracle already had. Its default is the WIDE graph:
+  // an edge the ontology refused is returned like any other unless a caller narrows.
+  accepted_only: pydanticBoolean().default(false),
 });
 
 /** `Literal["HIGH", "MEDIUM", "LOW"]`. */

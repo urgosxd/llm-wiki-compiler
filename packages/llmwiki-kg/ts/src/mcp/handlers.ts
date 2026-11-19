@@ -49,6 +49,41 @@ export function errorResult(text: string): CallToolResult {
 const MISSING_STACK_ERROR = "Error: 'stackId' must be provided.";
 
 /**
+ * The refusal for an `accepted_only` argument that is not a boolean.
+ *
+ * The MCP argument channel enforces nothing — the `inputSchema` is advice, and a
+ * model will hand over `"false"` as text. Text cannot be forwarded here, because a
+ * truthiness test on it is exactly the defect the flag must not have: `"false"` is
+ * true in JavaScript. So a non-boolean is refused before any request is built, and
+ * the caller learns the argument's type instead of receiving a graph it did not ask
+ * for.
+ */
+const ACCEPTED_ONLY_TYPE_ERROR = "Error: 'accepted_only' must be a boolean.";
+
+/**
+ * The refusal for a present-but-non-boolean `accepted_only`, or `undefined`.
+ *
+ * Absent is not a refusal: omitting the argument is the wide default, which is what
+ * `false` means here, and it is answered by every surface as such.
+ */
+function acceptedOnlyRefusal(args: Record<string, unknown>): string | undefined {
+  if (!("accepted_only" in args)) return undefined;
+  return typeof args["accepted_only"] === "boolean" ? undefined : ACCEPTED_ONLY_TYPE_ERROR;
+}
+
+/**
+ * A boolean tool argument as a query value, or `undefined` when it was not given.
+ *
+ * Only ever called after {@link acceptedOnlyRefusal} accepted the argument, so the
+ * value is a boolean by then. It is stringified as `true`/`false`, which is what the
+ * HTTP layer's own boolean parser reads.
+ */
+function booleanParam(args: Record<string, unknown>, key: string): QueryValue {
+  const value = args[key];
+  return typeof value === "boolean" ? rawParam(String(value)) : undefined;
+}
+
+/**
  * The HTTP wire key for the Stack.
  *
  * The MCP tools, the HTTP body, the HTTP query string and the path-parameter
@@ -209,6 +244,31 @@ async function statusErrorText(
   return `AKS server returned ${response.status}: ${await response.text()}`;
 }
 
+/**
+ * One graph read: encode the query, issue the GET, format the answer.
+ *
+ * The two GET tools differ only in their path, their parameters, their timeout and
+ * the formatter they end with, so the request-and-answer half lives here once. A
+ * non-200 is answered with the server's own text, never with a formatted success.
+ */
+async function graphRead(
+  deps: ResolvedDependencies,
+  path: string,
+  params: Record<string, QueryValue>,
+  timeoutMs: number,
+  format: (body: unknown) => string,
+): Promise<CallToolResult> {
+  const response = await deps.fetchImpl(`${deps.baseUrl}${path}?${encodeQuery(params)}`, {
+    method: "GET",
+    headers: authHeaders(deps.apiKey),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (response.status !== 200) {
+    return textResult(await statusErrorText(response));
+  }
+  return textResult(format(await response.json()));
+}
+
 export async function queryStack(
   args: Record<string, unknown>,
   deps: ResolvedDependencies,
@@ -226,9 +286,16 @@ export async function queryStack(
   if (malformed !== undefined) {
     return errorResult(malformed);
   }
+  const acceptedOnly = acceptedOnlyRefusal(args);
+  if (acceptedOnly !== undefined) {
+    return errorResult(acceptedOnly);
+  }
   payload[HTTP_STACK_FIELD] = stack.stackId;
   if (stack.hasDomain) {
     payload["domain"] = stack.domain;
+  }
+  if ("accepted_only" in args) {
+    payload["accepted_only"] = args["accepted_only"];
   }
 
   const response = await deps.fetchImpl(`${deps.baseUrl}/aks/v1/context`, {
@@ -262,6 +329,10 @@ export async function traverseStack(
   if (malformed !== undefined) {
     return errorResult(malformed);
   }
+  const acceptedOnly = acceptedOnlyRefusal(args);
+  if (acceptedOnly !== undefined) {
+    return errorResult(acceptedOnly);
+  }
 
   const params: Record<string, QueryValue> = {
     start,
@@ -274,21 +345,11 @@ export async function traverseStack(
     params["relationship_types"] = optionalStringParam(args, "relationship_types");
   }
 
-  const query = encodeQuery(params);
-  const response = await deps.fetchImpl(
-    `${deps.baseUrl}/aks/v1/traverse?${query}`,
-    {
-      method: "GET",
-      headers: authHeaders(deps.apiKey),
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
-
-  if (response.status !== 200) {
-    return textResult(await statusErrorText(response));
+  if ("accepted_only" in args) {
+    params["accepted_only"] = booleanParam(args, "accepted_only");
   }
 
-  return textResult(formatTraverseResponse(await response.json()));
+  return graphRead(deps, "/aks/v1/traverse", params, 30_000, formatTraverseResponse);
 }
 
 export async function getEntities(
@@ -307,6 +368,10 @@ export async function getEntities(
   if (malformed !== undefined) {
     return errorResult(malformed);
   }
+  const acceptedOnly = acceptedOnlyRefusal(args);
+  if (acceptedOnly !== undefined) {
+    return errorResult(acceptedOnly);
+  }
 
   const params: Record<string, QueryValue> = {
     min_confidence: typeof minConfidence === "number" ? floatParam(minConfidence) : undefined,
@@ -319,21 +384,11 @@ export async function getEntities(
     params["type"] = optionalStringParam(args, "type");
   }
 
-  const query = encodeQuery(params);
-  const response = await deps.fetchImpl(
-    `${deps.baseUrl}/aks/v1/entities?${query}`,
-    {
-      method: "GET",
-      headers: authHeaders(deps.apiKey),
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
-
-  if (response.status !== 200) {
-    return textResult(await statusErrorText(response));
+  if ("accepted_only" in args) {
+    params["accepted_only"] = booleanParam(args, "accepted_only");
   }
 
-  return textResult(formatEntitiesResponse(await response.json()));
+  return graphRead(deps, "/aks/v1/entities", params, 30_000, formatEntitiesResponse);
 }
 
 /**

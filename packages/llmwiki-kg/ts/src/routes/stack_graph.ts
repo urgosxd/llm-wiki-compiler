@@ -30,12 +30,23 @@
  *
  * ## Query parameters
  *
- * Two, both narrowings of the same graph, both bounded:
+ * Three, all narrowings of the same graph, all bounded:
  *
  * | Parameter | Default | Bounds | Effect |
  * | --- | --- | --- | --- |
  * | `min_confidence` | `0` | `[0, 1]` | drops entities below the bound |
  * | `limit` | `500` | `[1, 2000]` | caps nodes; edges follow endpoints |
+ * | `accepted_only` | `false` | boolean | drops the nodes and edges the ontology rejected |
+ *
+ * `accepted_only` is what removes rejected edges. `min_confidence` is NOT a
+ * substitute for it and never was: that bound is applied to NODES only — the node
+ * count and the node select — and the edge select carries no confidence predicate at
+ * all, so an edge the ontology refused passes any threshold a caller sets. Validity is
+ * a class, not a score; the rejected rows keep their real extracted confidence.
+ *
+ * Its default is the wide graph, matching every other graph surface: a caller who
+ * does nothing receives the rejected rows too, which is why the parameter is stated
+ * here rather than left to be discovered.
  *
  * The default `limit` is not the AKS entity default of 100: a graph view is
  * unreadable past a few hundred nodes anyway, but 100 would truncate an ordinary
@@ -53,7 +64,7 @@ import { z } from "zod";
 import { requireApiKey, type ApiKeyMiddleware } from "../auth.js";
 import { readStackGraph } from "../core/stack_graph.js";
 import { withRequestTransaction, type Database, type TransactionalHandler } from "../db.js";
-import { toFastApiValidationError } from "../errors.js";
+import { toFastApiValidationError, pydanticBoolean } from "../errors.js";
 import type { ValidationFailure } from "../errors.js";
 import { readQuery } from "./aks/query-params.js";
 import { parseStackId, sendApiError, sendValidationError } from "./documents/params.js";
@@ -100,10 +111,16 @@ export const StackGraphQuery = z.object({
     .min(1)
     .max(MAX_NODE_LIMIT)
     .default(DEFAULT_NODE_LIMIT),
+  // Parsed by the contract's own boolean primitive, not `z.coerce.boolean()`. That
+  // coercion is JavaScript truthiness, so the string `"false"` — the one value a
+  // caller is most likely to send — would arrive as TRUE and silently narrow the
+  // graph. This primitive reads the textual forms uniformly with the AKS routes and
+  // refuses anything that cannot mean either boolean.
+  accepted_only: pydanticBoolean().default(false),
 });
 
 /** The query keys this endpoint reads, in declaration order. */
-const GRAPH_QUERY_KEYS = ["min_confidence", "limit"] as const;
+const GRAPH_QUERY_KEYS = ["min_confidence", "limit", "accepted_only"] as const;
 
 /** Query-schema outcome, narrowed once so the handler reads no `success` flag. */
 type QueryParse =
@@ -151,6 +168,7 @@ async function getStackGraph(req: Request, res: Response, tx: Database): Promise
     stackId: stackId.value,
     minConfidence: query.data.min_confidence,
     limit: query.data.limit,
+    acceptedOnly: query.data.accepted_only,
   });
   if (!result.ok) {
     sendApiError(res, result.error);

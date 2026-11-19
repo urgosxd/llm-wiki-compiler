@@ -323,6 +323,22 @@ function sendEmptyContext(
 }
 
 /**
+ * The ontology-verdict predicate, or nothing at all for the wide default.
+ *
+ * Every statement this route runs on the ontology tables splices the same fragment, so
+ * `accepted_only` narrows the entities AND the edges that connect them. An entity the
+ * ontology refused is not merely hidden: it cannot be selected from the catalog, which
+ * is why the prompt's own catalog read is narrowed with this fragment too — an answer
+ * that names an entity it does not return would be a worse lie than the wide default.
+ *
+ * @param acceptedOnly - The request's flag; absent and `false` are the same answer.
+ * @returns The conjunction to splice in, or an empty fragment.
+ */
+function verdictClause(acceptedOnly: boolean): ReturnType<typeof sql> {
+  return acceptedOnly ? sql`and ontology_verdict = 'accepted'` : sql.empty();
+}
+
+/**
  * The entity catalog shown to the model: whole stack, most confident first.
  *
  * The `name, id` tie-break is not cosmetic. Without it two entities of equal
@@ -331,13 +347,18 @@ function sendEmptyContext(
  * open-classification migration added stack-leading indexes and changed that plan;
  * the order is now stated instead of inherited.
  */
-async function loadCatalog(tx: Database, stackId: string): Promise<CatalogRow[]> {
+async function loadCatalog(
+  tx: Database,
+  stackId: string,
+  acceptedOnly: boolean,
+): Promise<CatalogRow[]> {
   // The model can only select names it is shown, so this cap is part of what
   // bounds the prompt.
   return tx.execute<CatalogRow>(sql`
     select name, type
     from ontology_entities
     where stack_id = ${stackId}
+      ${verdictClause(acceptedOnly)}
     order by confidence desc, name, id
     limit ${CONTEXT_CATALOG_LIMIT}
   `);
@@ -358,6 +379,7 @@ async function loadSelectedEntities(
   tx: Database,
   stackId: string,
   entityNames: readonly string[],
+  acceptedOnly: boolean,
 ): Promise<(EntityRow & ClassificationColumns)[]> {
   return tx.execute<EntityRow & ClassificationColumns>(sql`
     select ${sql.raw(ENTITY_COLUMNS)}, ${sql.raw(CLASSIFICATION_COLUMNS)}
@@ -366,6 +388,7 @@ async function loadSelectedEntities(
       and lower(name) = any(${toPostgresArrayLiteral(
         entityNames.map((name) => name.toLowerCase()),
       )}::text[])
+      ${verdictClause(acceptedOnly)}
     order by name, id
   `);
 }
@@ -381,6 +404,7 @@ async function loadInternalRelationships(
   tx: Database,
   stackId: string,
   entityIds: readonly string[],
+  acceptedOnly: boolean,
 ): Promise<AKSRelationshipDto[]> {
   const rows = await tx.execute<Parameters<typeof rowToRelationship>[0]>(sql`
     select ${sql.raw(RELATIONSHIP_COLUMNS)}
@@ -388,6 +412,7 @@ async function loadInternalRelationships(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(entityIds)}::uuid[])
+      ${verdictClause(acceptedOnly)}
     order by type, from_entity_id, to_entity_id
   `);
   return rows.map(rowToRelationship);
@@ -427,7 +452,7 @@ interface SelectionOutcome {
 async function selectEntities(
   tx: Database,
   stackId: string,
-  payload: { query: string; max_entities: number },
+  payload: { query: string; max_entities: number; accepted_only: boolean },
 ): Promise<SelectionOutcome> {
   const queryEmbedding = await embedQuery(payload.query);
   const chunks = await retrieveRelevantChunks(
@@ -437,7 +462,7 @@ async function selectEntities(
     return { selection: null, earlyReason: "No relevant chunks found in the Stack.", earlyPath: [] };
   }
 
-  const catalog = await loadCatalog(tx, stackId);
+  const catalog = await loadCatalog(tx, stackId, payload.accepted_only);
   if (catalog.length === 0) {
     return { selection: null, earlyReason: "Stack has no compiled entities yet.", earlyPath: [] };
   }
@@ -460,6 +485,43 @@ async function selectEntities(
     };
   }
   return { selection, earlyReason: null, earlyPath: [] };
+}
+
+/**
+ * Answer from the model's selection: the entities it named plus the edges between them.
+ *
+ * Split out of the handler so the handler stays a pipeline a reader can follow in one
+ * screen. Both halves honour `accepted_only` — the entities and the edges — because an
+ * answer that dropped only one of them would still present a refused relation next to
+ * the nodes it connects.
+ */
+async function answerFromSelection(
+  res: Response,
+  tx: Database,
+  stackId: string,
+  payload: { query: string; include_relationships: boolean; accepted_only: boolean },
+  selection: Selection,
+): Promise<void> {
+  const entityRows = await loadSelectedEntities(
+    tx,
+    stackId,
+    selection.entityNames,
+    payload.accepted_only,
+  );
+  if (entityRows.length === 0) {
+    sendEmptyContext(res, payload.query, selection.reasoning, selection.entityNames);
+    return;
+  }
+
+  const relationships = payload.include_relationships
+    ? await loadInternalRelationships(
+        tx,
+        stackId,
+        entityRows.map((row) => row.id),
+        payload.accepted_only,
+      )
+    : [];
+  res.json(await buildContextResponse(tx, payload.query, entityRows, relationships, selection));
 }
 
 export async function contextQuery(req: Request, res: Response, tx: Database): Promise<void> {
@@ -491,17 +553,7 @@ export async function contextQuery(req: Request, res: Response, tx: Database): P
   }
   const selection = outcome.selection;
 
-  const entityRows = await loadSelectedEntities(tx, stackId, selection.entityNames);
-  if (entityRows.length === 0) {
-    sendEmptyContext(res, payload.query, selection.reasoning, selection.entityNames);
-    return;
-  }
-
-  const relationships = payload.include_relationships
-    ? await loadInternalRelationships(tx, stackId, entityRows.map((row) => row.id))
-    : [];
-
-  res.json(await buildContextResponse(tx, payload.query, entityRows, relationships, selection));
+  await answerFromSelection(res, tx, stackId, payload, selection);
 }
 
 // ---------------------------------------------------------------------------

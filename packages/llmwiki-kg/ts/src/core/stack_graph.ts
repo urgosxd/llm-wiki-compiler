@@ -116,6 +116,14 @@ export interface StackGraphRequest {
   readonly minConfidence: number;
   /** Maximum number of nodes; edges follow their endpoints. */
   readonly limit: number;
+  /**
+   * When `true`, nodes and edges the ontology REJECTED are omitted.
+   *
+   * The default is the wide graph, and `min_confidence` is not a substitute for this:
+   * it bounds confidence on NODES only and carries no meaning about validity. Optional
+   * so a caller that predates the flag keeps the payload it always got.
+   */
+  readonly acceptedOnly?: boolean;
 }
 
 /** A payload, or the error the transport should render instead. */
@@ -145,6 +153,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * The ontology-verdict predicate, or nothing at all for the wide default.
+ *
+ * Both tables use this one fragment: the node reads and the edge reads filter the
+ * same column, so a caller that narrows gets a graph whose nodes AND edges are the
+ * accepted ones. Returning `sql.empty()` on the default keeps the statement — and
+ * therefore the payload — identical to the one this module produced before the flag
+ * existed.
+ *
+ * @param acceptedOnly - The caller's flag; absent and `false` are the same answer.
+ * @returns The conjunction to splice in, or an empty fragment.
+ */
+function verdictClause(acceptedOnly: boolean | undefined): ReturnType<typeof sql> {
+  return acceptedOnly === true ? sql`and ontology_verdict = 'accepted'` : sql.empty();
+}
+
+/**
  * Counts the entities a filter selects, ignoring `limit`.
  *
  * A separate statement rather than `rows.length === limit`, because those two
@@ -156,12 +180,14 @@ async function countNodes(
   tx: Database,
   stackId: string,
   minConfidence: number,
+  acceptedOnly: boolean | undefined,
 ): Promise<number> {
   const rows = await tx.execute<{ total: number }>(sql`
     select count(*)::int as total
     from ontology_entities
     where stack_id = ${stackId}
       and confidence >= ${minConfidence}
+      ${verdictClause(acceptedOnly)}
   `);
   return rows[0]?.total ?? 0;
 }
@@ -183,12 +209,14 @@ async function loadNodes(
   stackId: string,
   minConfidence: number,
   limit: number,
+  acceptedOnly: boolean | undefined,
 ): Promise<NodeRow[]> {
   return tx.execute<NodeRow>(sql`
     select ${sql.raw(NODE_COLUMNS)}
     from ontology_entities
     where stack_id = ${stackId}
       and confidence >= ${minConfidence}
+      ${verdictClause(acceptedOnly)}
     order by confidence desc, name, id
     limit ${limit}
   `);
@@ -218,6 +246,7 @@ async function loadEdges(
   tx: Database,
   stackId: string,
   nodeIds: readonly string[],
+  acceptedOnly: boolean | undefined,
 ): Promise<EdgeRow[]> {
   if (nodeIds.length === 0) return [];
   return tx.execute<EdgeRow>(sql`
@@ -226,6 +255,7 @@ async function loadEdges(
     where stack_id = ${stackId}
       and from_entity_id = any(${toPostgresArrayLiteral(nodeIds)}::uuid[])
       and to_entity_id = any(${toPostgresArrayLiteral(nodeIds)}::uuid[])
+      ${verdictClause(acceptedOnly)}
     order by confidence desc, type, from_entity_id, to_entity_id
   `);
 }
@@ -293,9 +323,20 @@ export async function readStackGraph(
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
   const stackId = resolved.stack.id;
-  const total = await countNodes(tx, stackId, request.minConfidence);
-  const nodeRows = await loadNodes(tx, stackId, request.minConfidence, request.limit);
-  const edgeRows = await loadEdges(tx, stackId, nodeRows.map((row) => row.id));
+  const total = await countNodes(tx, stackId, request.minConfidence, request.acceptedOnly);
+  const nodeRows = await loadNodes(
+    tx,
+    stackId,
+    request.minConfidence,
+    request.limit,
+    request.acceptedOnly,
+  );
+  const edgeRows = await loadEdges(
+    tx,
+    stackId,
+    nodeRows.map((row) => row.id),
+    request.acceptedOnly,
+  );
 
   // Parsed, not hand-built: the schema fixes key order, so the wire contract is
   // declared in exactly one place instead of being implied by this literal.

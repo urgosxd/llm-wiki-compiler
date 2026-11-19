@@ -140,6 +140,16 @@ export interface ListEntitiesQuery {
    * compiling and keeps the answer it always got — both kinds of row.
    */
   readonly classificationState?: string | null;
+  /**
+   * When `true`, only entities the ontology ACCEPTED are returned; absent or
+   * `false` returns both classes.
+   *
+   * Optional for the same reason `classificationState` is: it is a NEW filter, and a
+   * caller that predates it keeps the answer it always got. `false` and absent mean
+   * the same thing on purpose — the default is the WIDE graph, and narrowing is the
+   * act the caller has to perform.
+   */
+  readonly acceptedOnly?: boolean;
 }
 
 /**
@@ -325,6 +335,29 @@ function classificationStateClause(state: string) {
   return sql`and classification_state = ${state}`;
 }
 
+/**
+ * The ontology-verdict predicate: accepted rows only, when the caller asked for them.
+ *
+ * One fragment per table reference, because the walk reaches the relationship table
+ * through its own `r` alias. Returning `sql.empty()` for the wide default is
+ * load-bearing: the default statement is then byte-identical to the one this module
+ * ran before the flag existed, so a caller who never uses the escape hatch cannot be
+ * affected by its presence.
+ *
+ * @param acceptedOnly - The caller's flag; `false` and absent are the same answer.
+ * @param restricted - The conjunction to splice in when the flag is on.
+ * @returns The predicate, or an empty fragment for the wide default.
+ */
+function verdictClause(acceptedOnly: boolean | undefined, restricted: ReturnType<typeof sql>) {
+  return acceptedOnly === true ? restricted : sql.empty();
+}
+
+/** The verdict predicate for an entity read. */
+const ACCEPTED_ENTITY_CLAUSE = sql`and ontology_verdict = 'accepted'`;
+
+/** The verdict predicate for an edge read, through the walk's `r` alias. */
+const ACCEPTED_EDGE_CLAUSE = sql`and r.ontology_verdict = 'accepted'`;
+
 /** Parameters for {@link traverseGraph}. */
 export interface TraverseQuery {
   readonly start: string;
@@ -332,6 +365,14 @@ export interface TraverseQuery {
   readonly domain: string | null;
   readonly maxDepth: number;
   readonly relationshipTypes: string | null;
+  /**
+   * When `true`, the walk does not cross an ontology-rejected edge.
+   *
+   * A rejected edge is an ordinary member of the graph by default, so it is followed
+   * — and the neighbour beyond it is reachable — unless the caller asks otherwise.
+   * Optional for the same compatibility reason as on {@link ListEntitiesQuery}.
+   */
+  readonly acceptedOnly?: boolean;
 }
 
 /** The walk plus the counts the oracle reports alongside it. */
@@ -457,6 +498,7 @@ function walkStatement(
   startId: string,
   maxDepth: number,
   typeClause: ReturnType<typeof sql>,
+  verdict: ReturnType<typeof sql>,
 ) {
   return sql`
     with recursive walk as (
@@ -483,6 +525,7 @@ function walkStatement(
       where r.stack_id = ${stackId}
         and not r.to_entity_id = any(w.visited)
         and w.depth < ${maxDepth}
+        ${verdict}
         ${typeClause}
     )
     select
@@ -523,10 +566,17 @@ async function walkGraph(
   startRow: { id: string; name: string },
   maxDepth: number,
   typesList: readonly string[] | null,
+  acceptedOnly: boolean | undefined,
 ): Promise<AKSTraverseResponseDto["steps"]> {
   const typeClause = typesList === null ? sql.empty() : canonicalRelationClause(typesList);
   const rows = await tx.execute<TraverseRow>(
-    walkStatement(stackId, startRow.id, maxDepth, typeClause),
+    walkStatement(
+      stackId,
+      startRow.id,
+      maxDepth,
+      typeClause,
+      verdictClause(acceptedOnly, ACCEPTED_EDGE_CLAUSE),
+    ),
   );
   return rows.map(rowToStep);
 }
@@ -539,6 +589,10 @@ async function walkGraph(
  * ordinary graph member, not a quarantine. A `type` filter is answered by the
  * catalog decision (see {@link canonicalTypeClause}) and a `classificationState`
  * filter by the recorded state.
+ *
+ * `acceptedOnly` is a third, independent axis — the ontology's verdict — and it is
+ * the only one that defaults to the WIDE answer: with the flag absent the statement
+ * adds no verdict predicate at all.
  *
  * @param tx - Transaction carrying the read.
  * @param query - Stack identity, optional type and state filters, confidence floor, limit.
@@ -555,6 +609,7 @@ export async function readEntities(
   const state = query.classificationState ?? null;
   const typeClause = type === "" ? sql.empty() : canonicalTypeClause(type);
   const stateClause = state === null ? sql.empty() : classificationStateClause(state);
+  const verdict = verdictClause(query.acceptedOnly, ACCEPTED_ENTITY_CLAUSE);
 
   const rows = await tx.execute<Parameters<typeof rowToEntity>[0] & ClassificationColumns>(sql`
     select ${sql.raw(ENTITY_COLUMNS)}, ${sql.raw(CLASSIFICATION_COLUMNS)}
@@ -563,6 +618,7 @@ export async function readEntities(
       and confidence >= ${query.minConfidence}
       ${typeClause}
       ${stateClause}
+      ${verdict}
     order by confidence desc, name
     limit ${query.limit}
   `);
@@ -660,6 +716,7 @@ export async function traverseGraph(
     startRow,
     query.maxDepth,
     parseTypeFilter(query.relationshipTypes),
+    query.acceptedOnly,
   );
 
   return {
