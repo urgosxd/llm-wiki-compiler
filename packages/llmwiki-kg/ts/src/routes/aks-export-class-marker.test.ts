@@ -26,6 +26,7 @@ import {
   database,
   deleteFixtureRows,
   qs,
+  RELATIONSHIP_KEYS,
   state,
   useDomainPrefix,
 } from "./aks-harness.js";
@@ -138,6 +139,69 @@ it.skipIf(skip)("exports only the accepted class by default, with no ontology ke
     expect(relationship).not.toHaveProperty("ontology_classification");
     expect(relationship).not.toHaveProperty("properties");
   }
+});
+
+it.skipIf(skip)("drops a refused edge from the default bundle while both its ends stay", async () => {
+  const fixture = await createFixture();
+  // `uses` runs Gateway -> Embedding Model: both ends are accepted, so the edge's own
+  // verdict is the ONLY thing that can remove it from the default bundle. Rejecting
+  // `has` instead would prove nothing, its target being refused in the same fixture.
+  await rejectRelationship(fixture.relationshipIds.uses);
+
+  const narrowed = await readBundle(fixture).expect(200);
+  const narrowedBody = narrowed.body as {
+    entity_count: number;
+    relationship_count: number;
+    relationships: Record<string, unknown>[];
+  };
+  expect(narrowedBody.entity_count).toBe(3);
+  // The accepted edge survives and the refused one is gone: the bundle is narrowed by the
+  // edge's own class, not by anything its ends did.
+  expect(narrowedBody.relationships.map((edge) => edge["id"])).toEqual([
+    fixture.relationshipIds.has,
+  ]);
+  expect(narrowedBody.relationship_count).toBe(1);
+
+  // The same Stack asked for both classes holds the edge again: the default narrowed it.
+  const wide = await readBundle(fixture, { accepted_only: "false" }).expect(200);
+  const wideBody = wide.body as {
+    relationship_count: number;
+    relationships: Record<string, unknown>[];
+  };
+  expect(wideBody.relationship_count).toBe(2);
+  expect(wideBody.relationships.map((edge) => edge["id"])).toContain(
+    fixture.relationshipIds.uses,
+  );
+});
+
+it.skipIf(skip)("gives a refused edge no class key at all when the caller opts in", async () => {
+  const fixture = await createFixture();
+  await rejectEntity(fixture.entityIds.limit);
+  await rejectRelationship(fixture.relationshipIds.has);
+
+  const response = await readBundle(fixture, { accepted_only: "false" }).expect(200);
+  const body = response.body as {
+    entities: { id: string; properties: Record<string, unknown> }[];
+    relationships: Record<string, unknown>[];
+  };
+
+  // Non-vacuous: the refused edge really reached this payload, so what follows is a
+  // statement about a row the serializer actually had to publish.
+  const refused = body.relationships.find((edge) => edge["id"] === fixture.relationshipIds.has);
+  expect(refused).toBeDefined();
+  // `AKSRelationship` is closed, so the ONLY conformant answer is that the key does not
+  // exist: `properties: null` would add a key the contract forbids. The exact key set
+  // says absent, where a presence check alone cannot.
+  expect(Object.keys(refused ?? {}).sort()).toEqual([...RELATIONSHIP_KEYS].sort());
+  expect(refused ?? {}).not.toHaveProperty("properties");
+  expect(refused ?? {}).not.toHaveProperty("ontology_classification");
+  expect(Object.values(refused ?? {}).every((value) => value !== null)).toBe(true);
+
+  // The refused ENTITY does publish its class, inside `properties`, so there the key set is
+  // exact the other way: the block itself, never a null standing in for it.
+  const limit = body.entities.find((entity) => entity.id === fixture.entityIds.limit);
+  expect(Object.keys(limit?.properties ?? {}).sort()).toEqual(["ontology_classification"]);
+  expect(Object.values(limit?.properties ?? {}).every((value) => value !== null)).toBe(true);
 });
 
 it.skipIf(skip)("returns the refused entity marked inside properties when the caller opts in", async () => {
