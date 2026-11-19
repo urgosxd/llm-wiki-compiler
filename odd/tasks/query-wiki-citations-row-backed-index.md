@@ -26,10 +26,10 @@ Restores answer-citation resolution on row-backed Stacks: `collectAnswerCitation
 
 ## Tasks
 
-- T1 — feature document. S1-S10. Parent (Lead) authors, worker writes. Commit 1.
-- T2 — thread the page-source seam into the citation index and make an unreadable index an error; RED then GREEN. S1, S3, S4, S5, S6, S7. Commit 2.
-- T3 — disk-versus-rows differential on identical content. S8. Commit 3.
-- T4 — independent verification and gates. S9, S10.
+- [x] T1 — feature document. S1-S10. Parent (Lead) authors, worker writes. Commit 1 `f93096b4b1d63adad91c2d7c06e6ceb4b92ce027` (`docs(odd): open the row-backed citation index feature`).
+- [x] T2 — thread the page-source seam into the citation index and make an unreadable index an error; RED then GREEN. S1, S3, S4, S5, S6, S7. Commit 2 (`fix(citations): read the citation index through the page-source seam`) — its SHA cannot be written inside its own diff; it is reported in the handoff and in `git log`.
+- [ ] T3 — disk-versus-rows differential on identical content. S8. Commit 3.
+- [ ] T4 — independent verification and gates. S9, S10.
 
 ## Log
 
@@ -73,3 +73,115 @@ The citation fix merged, and it does not fix the human's production bug. `collec
 - **Work-unit commits with `Risk:` lines.**
 - **Report: which source each deployment shape uses (`path:line`), whether a row-backed reader already existed, the empty-index-versus-empty-stack answer, the differential between disk and rows, the full 40-character SHA, and the gate scope with its counts.**
 - **Do not claim the human's production citations now resolve unless you can show a row-backed Stack resolving one.**
+
+### L2 — T2 evidence, verified this session (covers S1, S3, S4, S5, S6, S7)
+
+**Premises re-verified before writing (not re-derived from the assignment).**
+
+- E1, confirmed. Before this task `collectAnswerCitationIndex(root)` was disk-only: it
+  `safeRealpath`'d `root`, walked `<root>/wiki/concepts` and `<root>/wiki/queries`,
+  called `listCandidates`, and returned `{ retained: [], pending: [] }` when the root
+  did not resolve. Its two consumers were `answer-report.ts:13` and
+  `answer-publication.ts:65`.
+- E2, confirmed. `withRawPageSource` (`page-source-seam.ts:261-271`) hands the callback
+  `undefined` for the `file` authority and `createRawPageSource(db, stackId, root)` for
+  `stack`, and the seam idiom is uniform across its call sites (`export.ts:213`,
+  `snapshot.ts:164`, `linter/index.ts:180`, `graph-health.ts:97`, `okf/run.ts:19`,
+  `delta.ts:77`).
+- E3, confirmed and reused. The row reader is `createRawPageSource` →
+  `listStoredPagesUnfiltered` (`page-store.ts:257`), whose SQL already selects
+  `page_directory`, `slug` and `aliases`. No second reader was written.
+- E4, confirmed and fixed. `toRaw` (`page-scan-source.ts:278-299` before this change)
+  selected `aliases` at the SQL layer and then dropped them from `frontmatter`, while
+  the disk walk reads aliases from frontmatter (`answer-index.ts:30` before) and
+  `resolveBareSlug` uses them as a fallback.
+
+**Where the disk read is chosen, now explicit (S4).** `collectAnswerCitationIndex`
+(`answer-index.ts:142`) branches on the `source` argument the caller's seam resolved.
+There is no fallback: with a `source` the disk walk is not attempted at all, and without
+one the read is the byte-identical file read. Production callers hand the seam's answer
+in: `commands/query.ts:230` (`withRawPageSource(root, options.env ?? process.env, …)`)
+and `commands/query-publication.ts:85` (the save path, with the publication's own `env`).
+Both callers had an environment in scope, so none was invented.
+
+**RED, observed before the implementation.** `test/answer-citation-row-source.test.ts`
+(real database, project root with NO `wiki/` directory) — `3 failed | 1 passed`:
+
+```
+ FAIL  test/answer-citation-row-source.test.ts > resolves a row-backed page and reports only the absent one broken
+AssertionError: expected { version: 1, citations: [ …(2) ] } to deeply equal { version: 1, citations: [ …(2) ] }
+-       "pageId": "concepts/alpha",
+-       "status": "resolved",
++       "status": "broken",
+        "target": "alpha",
+      {
+        "status": "broken",
+        "target": "gone",
+ FAIL  test/answer-citation-row-source.test.ts > resolves a declared alias from rows, as the disk walk does
+-     "pageId": "concepts/vector-db",
+-     "status": "resolved",
++     "status": "broken",
+      "target": "vector-database",
+```
+
+The right failure: the existing page came back `broken` (the empty index) while the
+absent page's `broken` already matched, so the case discriminates instead of passing on
+an empty result.
+
+`test/answer-citation-index-unreadable.test.ts` — `3 failed | 1 passed`:
+
+```
+ FAIL  test/answer-citation-index-unreadable.test.ts > throws for a root it cannot resolve instead of reporting zero pages
+AssertionError: promise resolved "{ retained: [], pending: [] }" instead of rejecting
+ FAIL  test/answer-citation-index-unreadable.test.ts > reports an unreadable index as unavailable instead of printing verdicts
+AssertionError: expected { answerCitations: { …(2) } } to deeply equal {}
+ FAIL  test/answer-citation-index-unreadable.test.ts > refuses publication validation rather than publishing an unverifiable document
+AssertionError: The instanceof assertion needs a constructor but undefined was given.
+```
+
+The third failure is the class not existing yet — it is the discriminator's own
+assertion, not a behavioural pass.
+
+**GREEN, observed after the implementation.**
+`pnpm exec vitest run test/answer-citation-index-unreadable.test.ts test/answer-citation-row-source.test.ts`
+→ `Test Files 2 passed (2)`, `Tests 8 passed (8)`, nothing skipped.
+
+**F2 — the discriminator, and the rejected alternative.** `AnswerCitationIndexUnreadableError`
+(`answer-index.ts:53`) is thrown when no `source` was supplied and `safeRealpath(root)`
+returns null (`:152`). A discriminant field on the exported `AnswerCitationIndex`
+(`readable: true|false`) was CONSIDERED AND REJECTED: it is a breaking shape change to an
+exported type for information the type system already carries for free by throwing, and
+every existing consumer would have to handle a state that cannot be returned. Zero
+entries from a source that WAS readable stays a legitimate empty value — pinned both
+ways: rows-only Stack with no pages returns `{ retained: [], pending: [] }` without
+throwing, and an unresolved root throws. The existing boundaries then do the right thing
+with no new code: `query-citation-report.ts` prints `Answer citations: unavailable (…)`
+instead of fake verdicts, and `query-publication.ts` refuses the write with
+`code: "unavailable"` rather than publishing an unverifiable document.
+
+**F3 — the alias finding, and the shared-code change it required.** `frontmatter.aliases`
+has TWO consumers besides the citation index, both reached through the same `RawWikiPage`
+carrier:
+
+- `viewer/collect.ts:286` (`readAliases`) → `ViewerPage.aliases`, which
+  `resolveBareSlug`'s alias fallback reads (`viewer/collect.ts:108-111`), so row-backed
+  outgoing links and dangling links change;
+- `export/collect.ts:164` (`readStringArray(meta, "aliases")`) → the exported page's
+  `aliases`, which the OKF mapping emits (`export/okf/mapping.ts:51`).
+
+Adding aliases to `toRaw` (`page-scan-source.ts:296`) is therefore a SHARED-CODE
+behaviour change for row-backed viewers, exports and the linter corpus — toward parity
+with the file path, which has always read them from frontmatter. It cannot reach the disk
+path: `createRawPageSource` is only built in the `stack` branch of `withResolvedBackend`
+(`page-source-seam.ts:269`). Named in the commit `Risk:` line.
+
+**Named gap, not invented (pending).** A row-backed candidate source DOES exist:
+`withCandidateSource` (`candidate-source.ts:118-131`), which `listCandidates` already
+reaches through its own default `env`. The gap is that the index threads no environment,
+so `listCandidates` resolves `process.env` while the retained half resolves the caller's
+seam. On a host serving several Stacks the PENDING half of the index is still the
+deployment's queue. Pre-existing, unchanged by T2, out of this task's scope.
+
+**S8 is T3's, not claimed here.** No disk-versus-rows differential was run; these cases
+prove the row half only. S10 stands: nothing here claims the human's production citations
+resolve.

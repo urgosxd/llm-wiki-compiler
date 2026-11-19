@@ -4,6 +4,7 @@
  * output helpers retain the existing scoped quiet-mode behavior.
  */
 import type { AnswerCitationReport } from "../citations/answer-types.js";
+import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { reportAnswerCitations } from "../citations/answer-report.js";
 import type { QueryResult } from "../utils/types.js";
 import * as output from "../utils/output.js";
@@ -12,10 +13,20 @@ import * as output from "../utils/output.js";
  * Keep query diagnostics optional without weakening the strict collector API.
  * An unavailable snapshot must omit the field, never masquerade as an empty
  * successful report; generation and saving remain outside this recovery boundary.
+ *
+ * @param root - Project root, read on the file-backed path.
+ * @param body - Canonical answer body to classify.
+ * @param source - The row page reader the caller's seam resolved, or `undefined` to read
+ *   `wiki/` from disk. Without it a Stack deployment reports every citation broken.
+ * @returns The report field, or nothing when the index could not be read at all.
  */
-export async function reportQueryAnswerCitations(root: string, body: string): Promise<Pick<QueryResult, "answerCitations">> {
+export async function reportQueryAnswerCitations(
+  root: string,
+  body: string,
+  source?: RawPageSource,
+): Promise<Pick<QueryResult, "answerCitations">> {
   try {
-    return { answerCitations: await reportAnswerCitations(root, body) };
+    return { answerCitations: await reportAnswerCitations(root, body, source) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     output.note(`Answer citations: unavailable (${message})`);

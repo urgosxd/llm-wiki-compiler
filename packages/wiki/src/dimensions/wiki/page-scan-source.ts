@@ -286,6 +286,14 @@ export function createRawPageSource(
           title: page.title,
           summary: page.summary,
           tags: page.tags,
+          // ALIASES ARE PART OF THE PAGE, not decoration. The file scan parses them
+          // out of frontmatter, and two readers resolve identity with them: the
+          // viewer's bare-slug fallback (`viewer/collect.ts`) and the answer-citation
+          // index (`citations/answer-index.ts`). Omitting them here made the row
+          // backend resolve fewer names than the file backend for the same content.
+          // Omitted when empty, matching the file path, where an empty list is a
+          // deleted key (`applyDeclaredAliases`) and not `[]`.
+          ...(page.aliases !== undefined && page.aliases.length > 0 ? { aliases: page.aliases } : {}),
           ...(page.orphaned ? { orphaned: true } : {}),
           ...(page.archived ? { archived: true } : {}),
         },

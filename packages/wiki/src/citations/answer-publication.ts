@@ -10,6 +10,7 @@
  * only through the old page's aliases would pass and then break on write.
  */
 import type { AnswerCitationIndex, AnswerCitationReport, RetainedCitationTarget } from "./answer-types.js";
+import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { classifyAnswerCitations } from "./answer-report.js";
 import { collectAnswerCitationIndex } from "./answer-index.js";
 import { parseFrontmatter } from "../utils/markdown.js";
@@ -57,12 +58,23 @@ function projectPublishedQuery(index: AnswerCitationIndex, slug: string, meta: R
 /**
  * Validate the exact parsed body, freshly resolving inside the caller's lock,
  * against the index as it will be once `document` is written as `wiki/queries/<targetSlug>.md`.
+ *
+ * @param root - Project root, read on the file-backed path.
+ * @param document - The exact document the write would persist.
+ * @param mode - Publication mode deciding whether pending targets are acceptable.
+ * @param targetSlug - Slug the document will be written as.
+ * @param source - The row page reader the caller's seam resolved, or `undefined` to read
+ *   `wiki/` from disk. A source it cannot read throws, which is the only honest answer:
+ *   an empty index here would publish a document whose citations were never checkable.
+ * @returns The fresh report the policy accepted.
+ * @throws {CitationPublicationError} when policy refuses the report.
  */
 export async function validateCitationPublication(
   root: string, document: string, mode: CitationPublicationMode, targetSlug: string,
+  source?: RawPageSource,
 ): Promise<AnswerCitationReport> {
   const { meta, body } = parseFrontmatter(document);
-  const index = projectPublishedQuery(await collectAnswerCitationIndex(root), targetSlug, meta);
+  const index = projectPublishedQuery(await collectAnswerCitationIndex(root, source), targetSlug, meta);
   const report = classifyAnswerCitations(body, index);
   assertCitationPublication(report, mode);
   return report;

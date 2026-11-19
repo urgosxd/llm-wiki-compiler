@@ -24,7 +24,7 @@ import { languageDirective } from "../utils/output-language.js";
 import * as output from "../utils/output.js";
 import { verbose } from "../utils/output.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
-import { hasCompiledPages, withEmbeddingStoreSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
+import { hasCompiledPages, withEmbeddingStoreSource, withRawPageSource, withRegistrySource } from "../dimensions/wiki/page-source-seam.js";
 import { loadSelectedRefRecords } from "../search/retrieval.js";
 import type { EmbeddingStoreSource } from "../utils/embeddings-load.js";
 import type { RegistryPageSource } from "../utils/page-registry.js";
@@ -223,8 +223,12 @@ export async function generateAnswer(
   const answer = await timeStage("query.answer", () => callAnswerLLM(question, pagesContent, promptChunks, options.onToken));
   // Advisory citation report over the canonical saved body: a snapshot for the
   // caller, never permission to publish. Its failure preserves the answer.
+  // The index is read through the SAME seam retrieval and hydration used: a
+  // Stack's pages are rows, so a citation check that walks `wiki/` finds no page
+  // and calls every citation broken.
   const { document, body } = buildQueryDocument(question, answer, new Date().toISOString());
-  const citationFields = await reportQueryAnswerCitations(root, body);
+  const citationFields = await withRawPageSource(root, options.env ?? process.env,
+    (source) => reportQueryAnswerCitations(root, body, source));
   const publication = await maybeSaveQueryPage({
     root, question, answer, save: Boolean(options.save), document,
     // The same environment retrieval and hydration above were opened with: the saved

@@ -8,6 +8,7 @@
  */
 import { CitationPublicationError, validateCitationPublication } from "../citations/answer-publication.js";
 import type { AnswerCitationReport } from "../citations/answer-types.js";
+import { withRawPageSource } from "../dimensions/wiki/page-source-seam.js";
 import { loadNonDefaultProfile } from "../profile/block.js";
 import { acquireMutationLockBlocking } from "../utils/mutation-lock.js";
 import { releaseLock } from "../utils/lock.js";
@@ -63,12 +64,27 @@ function profileRefusal(): PublicationResult {
   return { publicationRefusal: { code: "profile-disabled", targets: [], message } };
 }
 
-/** Recover only validation failure; page/index/embedding/log writes are outside. */
-async function checkCitations(root: string, document: string, targetSlug: string): Promise<
+/**
+ * Recover only validation failure; page/index/embedding/log writes are outside.
+ *
+ * The index is resolved through the page-source seam, from the SAME environment the
+ * save writes with. A row-backed Stack keeps its pages in `wiki.pages`, so a check
+ * that walked `wiki/` would find nothing, call every citation broken, and refuse to
+ * publish a perfectly valid answer.
+ *
+ * @param root - Project root.
+ * @param document - The exact document the save would write.
+ * @param targetSlug - Slug the document will be written as.
+ * @param env - Environment naming the Stack this publication belongs to.
+ * @returns The fresh report, or the refusal to report.
+ */
+async function checkCitations(root: string, document: string, targetSlug: string, env: NodeJS.ProcessEnv): Promise<
   { report: AnswerCitationReport } | { publicationRefusal: PublicationRefusal }
 > {
   try {
-    return { report: await validateCitationPublication(root, document, "direct", targetSlug) };
+    const report = await withRawPageSource(root, env,
+      (source) => validateCitationPublication(root, document, "direct", targetSlug, source));
+    return { report };
   } catch (error) {
     if (error instanceof CitationPublicationError) {
       return { publicationRefusal: { code: error.code, targets: error.targets, message: error.message } };
@@ -90,7 +106,7 @@ export async function maybeSaveQueryPage(options: QueryPublicationOptions): Prom
     if (await loadNonDefaultProfile(root)) return profileRefusal();
     await afterSaveGateForTest?.();
     const document = options.document ?? buildQueryDocument(question, answer, new Date().toISOString()).document;
-    const validation = await checkCitations(root, document, slugify(question));
+    const validation = await checkCitations(root, document, slugify(question), options.env ?? process.env);
     if ("publicationRefusal" in validation) return validation;
     return { saved: await saveQueryPageLocked(root, question, document, options.env) };
   } finally {

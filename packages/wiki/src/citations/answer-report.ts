@@ -5,13 +5,27 @@
  * snapshots, not factual-support judgments or authority to publish an answer.
  */
 import type { AnswerCitation, AnswerCitationIndex, AnswerCitationReport } from "./answer-types.js";
+import type { RawPageSource } from "../dimensions/wiki/page-scan-source.js";
 import { recognizedWikilinkTargets } from "../wiki/wikilink-tokens.js";
 import { resolveBareSlug } from "../viewer/collect.js";
 import { collectAnswerCitationIndex } from "./answer-index.js";
 
-/** Build a fresh snapshot and classify the caller's canonical answer body. */
-export async function reportAnswerCitations(root: string, body: string): Promise<AnswerCitationReport> {
-  return classifyAnswerCitations(body, await collectAnswerCitationIndex(root));
+/**
+ * Build a fresh snapshot and classify the caller's canonical answer body.
+ *
+ * @param root - Project root, read on the file-backed path.
+ * @param body - Canonical answer body to classify.
+ * @param source - The row page reader the caller's seam resolved, or `undefined` to read
+ *   `wiki/` from disk. Forwarded untouched: this function has no opinion about the
+ *   backend, and a fallback here is exactly how a Stack's citations resolved nothing.
+ * @returns The report; a source that cannot be read throws rather than reporting no links.
+ */
+export async function reportAnswerCitations(
+  root: string,
+  body: string,
+  source?: RawPageSource,
+): Promise<AnswerCitationReport> {
+  return classifyAnswerCitations(body, await collectAnswerCitationIndex(root, source));
 }
 
 /** Classify unique answer wikilinks in first-occurrence order. */
