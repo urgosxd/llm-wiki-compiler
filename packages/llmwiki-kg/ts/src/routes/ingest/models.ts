@@ -136,8 +136,8 @@ export const DocIdParams = z.object({ doc_id: pydanticUuid() });
  * with `?synthesize_descriptions=true&synthesize_descriptions=false` and the
  * reverse order.
  */
-/** The two admission contracts this endpoint offers, in the option's own spelling. */
-export const INGEST_CONTRACTS = ["open", "strict"] as const;
+/** The three admission contracts this endpoint offers, in the option's own spelling. */
+export const INGEST_CONTRACTS = ["open", "strict", "persist"] as const;
 
 /**
  * Query-parameter validator for `ontology_contract`.
@@ -145,18 +145,26 @@ export const INGEST_CONTRACTS = ["open", "strict"] as const;
  * ## What it selects, and why it is named this way
  *
  * It selects the extraction ADMISSION CONTRACT, using the vocabulary the
- * programmatic option already uses (`ExtractionOptions.contract`, whose two values
- * are exactly `open` and `strict`). That reuse is the point: there is one meaning of
- * "strict" in this package and this parameter does not invent a second one.
+ * programmatic option already uses (`ExtractionOptions.contract`, whose three values
+ * are exactly `open`, `strict` and `persist`). That reuse is the point: there is one
+ * meaning of "strict" in this package and this parameter does not invent a second one.
+ *
+ * The three sit on ONE axis — what happens to a triplet the ontology turns away — so
+ * every value below names an answer rather than a feature:
  *
  * - absent, or `open` — the DEFAULT, and the behaviour the ingest endpoint has had
  *   since the open contract landed. The Stack's declaration ORIENTS the extraction: a
  *   candidate the catalog does not name is kept with the type and predicate the model
- *   proposed (S1, S7).
+ *   proposed (S1, S7). Nothing is refused, so there is no second class to write.
  * - `strict` — the previous pipeline's behaviour, restored as an explicit opt-in. The
  *   declaration is an ADMISSION FILTER: a triplet whose entity type or predicate it
  *   does not name is dropped, counted in the document's `audit.ontology` section, and
  *   no `audit.open` section is written because nothing was kept against the catalog.
+ * - `persist` — the declaration is enforced exactly as `strict` enforces it, and the
+ *   triplet it turns away is KEPT. Both classes are stored with their class, their
+ *   reason and the refused type, so the graph answers what the ontology decided instead
+ *   of leaving the refusal unreadable. This is the contract the wiki `kg` dimension
+ *   already behaves like, which is why it is nameable from this endpoint at all.
  *
  * The default is `open` on purpose. Openness is what S1 and S7 require of ingestion, so
  * a closed graph has to be asked for; a default that closed it would silently discard

@@ -104,13 +104,24 @@ function emptyResult(): ExtractionOutcome {
  * - `open`    the open contract: the declaration is orientation, so a candidate
  *   the catalog does not name is ADMITTED with the type and predicate the model
  *   proposed. The ingest pipeline selects this one explicitly.
+ * - `persist` the enforcing contract that KEEPS what it refuses: the declaration is
+ *   enforced exactly as `strict` enforces it, and the triplet is then stored with its
+ *   class, its reason and the refused type instead of being dropped, so BOTH classes
+ *   reach the graph. This is what the wiki `kg` dimension already does with no contract
+ *   named, and the reason the value exists: the same document through both entry points
+ *   must produce the same classes.
+ *
+ * The three sit on ONE axis — what happens to a triplet the ontology turns away. `open`
+ * takes no verdict, `strict` takes it and refuses the triplet, `persist` takes it and
+ * keeps it. So `persist` needs no third code path: it falls through the open-only guard
+ * in {@link chunkTriplets} and runs the enforcing path, deliberately.
  *
  * The default stays `strict` on purpose. A function whose default silently changed
  * would move the behaviour of every caller nobody audited, and a default the
  * production path does not use is a trap in the other direction — so the pipeline
  * names `open` at its call site, which is where the choice belongs.
  */
-export type ExtractionContract = "strict" | "open";
+export type ExtractionContract = "strict" | "open" | "persist";
 
 /** Everything only an open run can report about what it answered. */
 export interface OpenExtractionReport {
@@ -147,7 +158,10 @@ export interface ClassifiedRelationship
 
 /** How one extraction run is asked: which contract, and how much one chunk may cost. */
 export interface ExtractionOptions extends TripletBudgetOptions {
-  /** The admission contract; defaults to `strict`, the oracle-parity behaviour. */
+  /**
+   * The admission contract — `strict`, `open` or `persist`; defaults to `strict`, the
+   * oracle-parity behaviour.
+   */
   readonly contract?: ExtractionContract;
 }
 
@@ -241,6 +255,9 @@ async function chunkTriplets(
   ontology: Ontology | undefined,
   options: ExtractionOptions,
 ): Promise<ChunkOutput> {
+  // A negative guard, not a switch: only `open` leaves the enforcing path. `persist`
+  // deliberately falls through here — it enforces the declaration like `strict` does,
+  // and its refused rows travel on so both classes are stored with their reason.
   if (options.contract === "open" && ontology !== undefined) {
     return openChunkTriplets(chunk, stackName, ontology, options);
   }

@@ -138,7 +138,8 @@ export interface IngestParams {
   readonly docId: string;
   readonly synthesizeDescriptions: boolean | null;
   /**
-   * The admission contract for this run: `open` unless the caller asked for `strict`.
+   * The admission contract for this run: `open` unless the caller asked for one of the
+   * two enforcing contracts, `strict` or `persist`.
    *
    * Resolved here rather than left optional, so the default direction is decided in
    * ONE place and the pipeline can never run an ambiguous contract.

@@ -334,12 +334,12 @@ async function extractAndSynthesize(
 /**
  * What the requested admission contract lets into the graph.
  *
- * ## STRICT WINS over the two-class default
+ * ## STRICT WINS, and it is the only value that removes anything
  *
  * `?ontology_contract=strict` is an explicit opt-in to a CLOSED graph, so a caller who
  * asked for it must not receive rows the ontology refused as a side effect of a feature
- * it never invoked — the closed contract is the contract, and the two-class default is
- * only what a caller who did not ask for anything closed gets.
+ * it never invoked — the closed contract is the contract. It is the only value that
+ * removes a row: `open` refuses nothing, and `persist` keeps what it refuses.
  *
  * So under `strict` every refused row is removed before anything is written, while the
  * extraction's own `rejected` report is kept untouched: the document's `audit.ontology`
@@ -350,11 +350,16 @@ async function extractAndSynthesize(
  * the catalog ORIENTS an open run, so the same input reaches the graph as an admitted row
  * with its `audit.open` mismatch recorded beside it, never as a refused one. The `rejected`
  * class this filter reads is produced by the enforcing side of `rejectTriplet`, which the
- * endpoint reaches only through `strict`.
+ * endpoint reaches only through `strict` or `persist`.
  *
- * The verdict itself is NOT re-decided here: `rejectTriplet` and the four checks that
- * produce these classes are untouched (S9). This function only removes what they already
- * refused, and only when the caller asked for that.
+ * `persist` — the third value — removes nothing either, deliberately: it takes the verdict
+ * `strict` takes and then KEEPS the triplet, so both classes reach the graph each carrying
+ * its class, reason and refused type. The filter below is a negative guard keyed on
+ * `strict` alone, and `persist` falls through it untouched for exactly that reason.
+ *
+ * The verdict itself is NOT re-decided here, under any of the three: `rejectTriplet` and
+ * the four checks that produce these classes are untouched (S9). This function only
+ * removes what they already refused, and only when the caller asked for that.
  *
  * @param extraction - What the provider stage produced, every row carrying its class.
  * @param contract - The admission contract this request selected.
@@ -364,6 +369,9 @@ function admittedExtraction(
   extraction: ExtractionOutcome,
   contract: ExtractionContract,
 ): ExtractionOutcome {
+  // A negative guard keyed on ONE value, not a switch: `persist` deliberately falls
+  // through here. It keeps the rows the ontology refused so both classes are stored
+  // with their class, reason and refused type — the behaviour its name describes.
   if (contract !== "strict") return extraction;
   return {
     ...extraction,
@@ -381,8 +389,9 @@ function admittedExtraction(
  * does not name is kept with the type and predicate the model proposed. The `strict`
  * contract — the previous pipeline's behaviour, where the declaration was an
  * admission filter — is still available and is selected explicitly per request
- * through the ingest endpoint's `ontology_contract` query parameter. The choice is
- * made here, at admission time, which is the only place it can change what enters
+ * through the ingest endpoint's `ontology_contract` query parameter, as is `persist`,
+ * which enforces the declaration and stores both classes with their reason. The choice
+ * is made here, at admission time, which is the only place it can change what enters
  * the graph.
  *
  * @param params - The validated ingest request.
