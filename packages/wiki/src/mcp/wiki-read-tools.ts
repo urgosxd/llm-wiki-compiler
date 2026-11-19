@@ -41,6 +41,7 @@ import { getPage } from "../pages/list.js";
 import type { PageListingSource } from "../pages/list.js";
 import { readPageRecord, pageLinkRefs } from "../pages/read.js";
 import type { PageLinkRef } from "../pages/read.js";
+import { parseQualifiedPageId, qualifiedPageId } from "../utils/page-id.js";
 import { pickSearchRefs, loadSelectedRefs } from "../search/retrieval.js";
 import { collectStatus } from "../status/collect.js";
 import { ensureProviderAvailable } from "../utils/provider-guard.js";
@@ -192,7 +193,40 @@ function registerSearchTool(server: McpServer, root: string): void {
 }
 
 /**
- * Resolve one page by slug, from the registry when there is one.
+ * What one `read_page` argument addresses: which directories to search, and under
+ * which page part.
+ *
+ * A BARE slug keeps the documented concepts-then-queries order under itself. A
+ * QUALIFIED id (`<namespace>/<page-part>`) addresses exactly one directory — an
+ * explicit namespace is never second-guessed, and a namespace that is not one of the
+ * wiki's directories addresses nothing, which is why the list comes back EMPTY rather
+ * than falling back to the bare order.
+ *
+ * `qualified` is reported so the caller can answer with the id it was asked with
+ * without parsing the argument a second time.
+ *
+ * @param slug - The `read_page` argument, bare or qualified.
+ * @returns The directories to try, the page part to look up, and whether the argument
+ *   named a namespace.
+ */
+function lookupScope(slug: string): {
+  directories: readonly (typeof READ_DIRECTORIES)[number][];
+  pageSlug: string;
+  qualified: boolean;
+} {
+  const parsed = parseQualifiedPageId(slug);
+  if (parsed === null) {
+    return { directories: READ_DIRECTORIES, pageSlug: slug, qualified: false };
+  }
+  return {
+    directories: READ_DIRECTORIES.filter((directory) => directory === parsed.namespace),
+    pageSlug: parsed.pagePart,
+    qualified: true,
+  };
+}
+
+/**
+ * Resolve one page by slug or qualified page id, from the registry when there is one.
  *
  * ## Why both sources are tried, in this order
  *
@@ -200,13 +234,19 @@ function registerSearchTool(server: McpServer, root: string): void {
  * the registry source is asked in that same order so a slug that exists in both
  * resolves identically whether it came from a row or a file.
  *
+ * A QUALIFIED id (`queries/x`) is a different question and gets a different answer: it
+ * addresses that one directory and never the other, because an explicit namespace is
+ * what the caller used to disambiguate. It is resolved against the SAME source the bare
+ * form uses, so the two branches of this function cannot disagree about which page a
+ * given id names.
+ *
  * The fallback is not defensive padding: a project with no database is a supported
  * deployment, and on it `pageSource` is `undefined` and the on-disk read is the only
  * correct answer. The two paths cannot disagree about a slug that exists in both,
  * because the registry is the compiled copy of that file.
  *
  * @param root - Absolute path to the wiki project root.
- * @param slug - Page slug, without the `.md` extension.
+ * @param slug - Page slug without the `.md` extension, or a qualified page id.
  * @param pageSource - Registry-backed reader, or `undefined` to read from disk.
  * @returns The page, or `null` when neither source has it.
  */
@@ -229,25 +269,27 @@ async function readPageBySlug(
     // helper `readPageRecord` uses.
     return { ...record, links: record.links ?? pageLinkRefs(record.body) };
   }
-  for (const pageDirectory of READ_DIRECTORIES) {
-    const page = await getPage(root, { pageDirectory, slug }, pageSource);
+  const { directories, pageSlug, qualified } = lookupScope(slug);
+  for (const pageDirectory of directories) {
+    const page = await getPage(root, { pageDirectory, slug: pageSlug }, pageSource);
     // Orphaned pages are skipped to match `readPageRecord`, which only reports a page
     // whose sources still exist. Serving one would answer with a body no compilation
     // claims any more.
-    if (page !== null && !page.orphaned) {
-      const body = page.body ?? "";
-      // Both branches take the links from the SAME helper over the body, so the wire
-      // object cannot differ by source. The body is already in hand, so this costs no
-      // extra query — and it reads the page's own wikilinks rather than the curated
-      // overlay, which is a different (review-added) edge set.
-      return {
-        slug: page.slug,
-        title: page.title,
-        summary: page.summary,
-        body,
-        links: pageLinkRefs(body),
-      };
-    }
+    if (page === null || page.orphaned) continue;
+    const body = page.body ?? "";
+    // Both branches take the links from the SAME helper over the body, so the wire
+    // object cannot differ by source. The body is already in hand, so this costs no
+    // extra query — and it reads the page's own wikilinks rather than the curated
+    // overlay, which is a different (review-added) edge set.
+    return {
+      // A bare read reports the bare stem it found; a qualified read reports the id
+      // it was given, which is the form a caller can pass straight back.
+      slug: qualified ? qualifiedPageId(pageDirectory, page.slug) : page.slug,
+      title: page.title,
+      summary: page.summary,
+      body,
+      links: pageLinkRefs(body),
+    };
   }
   return null;
 }
@@ -259,7 +301,7 @@ async function readPageBySlug(
  * so the registry path can be exercised without constructing an MCP server.
  *
  * @param root - Absolute path to the wiki project root.
- * @param slug - Page slug, without the `.md` extension.
+ * @param slug - Page slug without the `.md` extension, or a qualified page id.
  * @param stackId - Stack whose registry should be read.
  * @returns The page, or `null` when the registry has no such page.
  */
@@ -283,17 +325,26 @@ function registerReadTool(server: McpServer, root: string): void {
     {
       title: "Read Page",
       description:
-        "Read one compiled wiki page by slug, including its frontmatter and full " +
-        "body. Searches concepts/ then queries/. Read-only. Returns the page plus " +
+        "Read one compiled wiki page by `slug`, including its frontmatter and full " +
+        "body. `slug` is either a bare page slug (`retrieval`) or a qualified page id " +
+        "(`concepts/retrieval`). A bare slug searches concepts/ then queries/; a " +
+        "qualified id searches ONLY the namespace it names, which is the only way to " +
+        "reach one of two pages that share a stem. Read-only. Returns the page plus " +
         "`links`: an array of `{ slug, label }` describing the page's OUTGOING " +
-        "wikilinks, where `slug` is the target page's slug that can be passed " +
-        "straight back to `read_page` to follow the reference, and `label` is the " +
+        "wikilinks, where `slug` is the target page's bare slug or qualified page id " +
+        "— the same form this tool accepts — so it can be passed straight back to " +
+        "`read_page` to follow the reference, and `label` is the " +
         "anchor text the page used (the target text itself when the wikilink has no " +
         "alias). `links` is always an array and is empty when the page links " +
         "nowhere. " +
         STACK_ARG_REQUIRED_NOTE,
       inputSchema: {
-        slug: z.string().describe("Page slug, without the .md extension."),
+        slug: z
+          .string()
+          .describe(
+            "Page slug without the .md extension (`retrieval`), or a qualified page id " +
+              "naming its directory (`concepts/retrieval`, `queries/retrieval`).",
+          ),
         stackId: STACK_ID_SCHEMA,
       },
     },

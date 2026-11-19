@@ -45,10 +45,10 @@ be one because `primary key (stack_id, page_directory, slug)`
 coexist. `Page.links` is built from the body, so exposing labelled refs costs no extra
 query, and the export writers resolve every target against the `(page_directory, slug)`
 pair (`packages/wiki/src/export/link-targets.ts`) instead of against a set of slugs. The
-wire `links[].slug` of `read_page` is projected to the bare slug, because that tool
-takes a slug rather than a page id — the one projection that DISCARDS the namespace, so
-under a collision it names whichever page `read_page` finds first
-(`odd/tasks/query-wiki-citation-targets.md`, `L10`).
+wire `links[].slug` of `read_page` carries that same normalized target — a bare slug, or
+a qualified page id — and `read_page` ACCEPTS BOTH: a bare slug keeps its
+concepts-then-queries search, a qualified id searches only the namespace it names. That
+is a contract EXTENSION, not a change: every bare-slug caller answers as it always did.
 
 `wiki.curated_links` is **not** that source and is the wrong one for a per-page
 outgoing-link view. It is the curated overlay: rows scoped by `source_page_id` and

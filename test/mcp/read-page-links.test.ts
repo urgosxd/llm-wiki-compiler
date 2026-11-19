@@ -31,6 +31,7 @@ import { callToolPayload, seedConceptPage } from "../fixtures/mcp-stack-rows.js"
 import { provisionStack, type ProvisionedStack } from "../fixtures/stack-harness.js";
 import { scratchProjectRoot } from "../fixtures/host-scratch.js";
 import { pageLinkRefs } from "../../packages/wiki/src/pages/read.js";
+import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/page-write-sink.js";
 
 /** Body text of the page that LINKS out; long enough to stay clear of `empty-page`. */
 const ALPHA_TEXT = "Alpha body text, which points at [[beta|Beta label]] for the rest.";
@@ -41,7 +42,9 @@ const ALPHA_TEXT = "Alpha body text, which points at [[beta|Beta label]] for the
 const QUALIFIED_TEXT = "Qualified body text, which points at [[concepts/beta]] for the rest.";
 /** Body text of the page the link NAMES, distinctive so a wrong page cannot pass. */
 const BETA_TEXT = "Beta body text, reachable only by following the link.";
-/** Body text of a page that names no other page. */
+/** A page whose outgoing link names its target by QUALIFIED page id, in the OTHER namespace. */
+const CROSS_NAMESPACE_TEXT = "Collision body text, which points at [[queries/x]] for the rest.";
+/** A page that names no other page. */
 const LONE_TEXT = "Lone body text, which points at nothing at all.";
 /** Body text of a page whose only link names a page nothing ever wrote. */
 const DANGLING_TEXT = "Dangling body text, which points at [[never-written]].";
@@ -63,6 +66,21 @@ const LONE_PAGE: SeedPage = { slug: "lone", title: "Lone", summary: "lone summar
 /** A page whose only outgoing link names its target by QUALIFIED page id. */
 const QUALIFIED_PAGE: SeedPage = {
   slug: "qualified", title: "Qualified", summary: "qualified summary", text: QUALIFIED_TEXT,
+};
+/**
+ * Two pages that share one stem, one per directory. They differ in title and body so
+ * that landing on the wrong one cannot pass: a page is `(page_directory, slug)`
+ * (`packages/wiki/src/dimensions/wiki/schema.sql:106`), and `x` names neither.
+ */
+const CONCEPT_X_PAGE: SeedPage = {
+  slug: "x", title: "Concept X", summary: "concept x summary", text: "Concept X body text.",
+};
+const QUERY_X_PAGE: SeedPage = {
+  slug: "x", title: "Query X", summary: "query x summary", text: "Query X body text.",
+};
+/** The page whose body links to the QUERY `x` while both `x` pages exist. */
+const CROSS_NAMESPACE_PAGE: SeedPage = {
+  slug: "cross", title: "Cross", summary: "cross summary", text: CROSS_NAMESPACE_TEXT,
 };
 
 /**
@@ -140,16 +158,43 @@ async function seedAndRead(
 }
 
 /**
+ * Seed `concepts/x` and `queries/x` — one stem, two directories — through the
+ * production write sink.
+ *
+ * The sink takes the directory, so the second namespace needs no fixture of its own;
+ * `seedConceptPage` covers `concepts` only, and a hand-written row would be a second
+ * shape for state the product writes one way.
+ */
+async function seedBothStemHolders(): Promise<void> {
+  const sink = createPageWriteSink(stack.harness.db, stack.harness.stackId);
+  await seedConceptPage(
+    stack.harness,
+    CONCEPT_X_PAGE.slug,
+    pageBody(CONCEPT_X_PAGE.title, CONCEPT_X_PAGE.summary, CONCEPT_X_PAGE.text),
+  );
+  await sink({
+    directory: "queries",
+    slug: QUERY_X_PAGE.slug,
+    body: pageBody(QUERY_X_PAGE.title, QUERY_X_PAGE.summary, QUERY_X_PAGE.text),
+  });
+}
+
+/**
  * Follow a reported link slug the way a client does, and prove it reaches the target.
  *
  * Both the bare-slug and the qualified-id case assert the same promise — the wire
  * `slug` is followable — so the follow lives here once instead of twice.
  *
  * @param links - The decoded `links` array of the page that was read.
+ * @param expectedSlug - The page id `read_page` must answer with, which is the value
+ *   the link carried: `beta` for a bare target, `concepts/beta` for a qualified one.
  */
-async function expectFollowsToBeta(links: Array<{ slug: string }>): Promise<void> {
+async function expectFollowsToBeta(
+  links: Array<{ slug: string }>,
+  expectedSlug: string,
+): Promise<void> {
   const target = await readPage(links[0].slug);
-  expect(target.slug).toBe("beta");
+  expect(target.slug).toBe(expectedSlug);
   expect(target.title).toBe("Beta");
   expect(target.body).toContain(BETA_TEXT);
 }
@@ -170,7 +215,7 @@ describe("read_page outgoing links — traversal", () => {
 
     // A link an agent cannot follow is not the feature: the slug it was handed must
     // resolve to the page the label named.
-    await expectFollowsToBeta(alpha.links);
+    await expectFollowsToBeta(alpha.links, "beta");
   }, 60_000);
 });
 
@@ -232,26 +277,60 @@ describe("pageLinkRefs", () => {
     ]);
   });
 
-  it("projects a qualified target to the bare slug read_page accepts", () => {
-    // `read_page` addresses pages by BARE slug (its schema says "without the .md
-    // extension" and it looks the slug up with no qualified-id parsing), so the wire
-    // field cannot carry `concepts/beta` and still be "passable straight back to
-    // read_page". The projection happens here, and the label keeps what the page wrote.
+  it("keeps a qualified wikilink target as the slug read_page accepts", () => {
+    // The wire field must be FOLLOWABLE, and a page is `(page_directory, slug)`, so
+    // the normalized target is carried verbatim: projecting `concepts/beta` to `beta`
+    // names a different page whenever `queries/beta` also exists (`read_page` reads
+    // concepts first). The label keeps what the page wrote.
     expect(pageLinkRefs("See [[concepts/beta]] and [[queries/gamma|Gamma label]].")).toEqual([
-      { slug: "beta", label: "concepts/beta" },
-      { slug: "gamma", label: "Gamma label" },
+      { slug: "concepts/beta", label: "concepts/beta" },
+      { slug: "queries/gamma", label: "Gamma label" },
     ]);
   });
 });
 
 describe("read_page links that name their target by qualified page id", () => {
-  it("hands back a bare slug that read_page can follow, as its description promises", async () => {
+  it("hands back the qualified target and read_page follows it to that page", async () => {
     const payload = await seedAndRead("qualified", QUALIFIED_PAGE, BETA_PAGE);
     if (payload === null) return;
 
-    // The documented promise is that `links[].slug` can be passed straight back.
-    expect(payload.links).toEqual([{ slug: "beta", label: "concepts/beta" }]);
+    // The documented promise is that `links[].slug` can be passed straight back, and
+    // the only value that keeps that promise is the one the link actually carried.
+    expect(payload.links).toEqual([{ slug: "concepts/beta", label: "concepts/beta" }]);
 
-    await expectFollowsToBeta(payload.links);
+    await expectFollowsToBeta(payload.links, "concepts/beta");
+  }, 60_000);
+
+  it("follows [[queries/x]] to the QUERIES page when both directories hold x", async () => {
+    // LOUD precondition, not a skip: this case asserts which page was reached, and an
+    // unreachable database would let the concepts page win for the wrong reason.
+    expect(stack.harness.reachable).toBe(true);
+    await seedBothStemHolders();
+    await seedConceptPage(
+      stack.harness,
+      CROSS_NAMESPACE_PAGE.slug,
+      pageBody(CROSS_NAMESPACE_PAGE.title, CROSS_NAMESPACE_PAGE.summary, CROSS_NAMESPACE_PAGE.text),
+    );
+
+    const payload = await readPage("cross");
+
+    // The link said `queries`. A bare `x` here follows the concepts-first rule and
+    // arrives at a page the body never named.
+    expect(payload.links).toEqual([{ slug: "queries/x", label: "queries/x" }]);
+    const followed = await readPage(payload.links[0].slug);
+    expect(followed.title).toBe("Query X");
+    expect(followed.body).toContain("Query X body text.");
+  }, 60_000);
+
+  it("leaves the bare-slug path alone: read_page('x') still answers the CONCEPTS page", async () => {
+    // PRESERVE, and pin what it is rather than choosing it: with a stem in both
+    // directories, a bare slug has always meant "concepts first".
+    expect(stack.harness.reachable).toBe(true);
+    await seedBothStemHolders();
+
+    const bare = await readPage("x");
+    expect(bare.slug).toBe("x");
+    expect(bare.title).toBe("Concept X");
+    expect(bare.body).toContain("Concept X body text.");
   }, 60_000);
 });
