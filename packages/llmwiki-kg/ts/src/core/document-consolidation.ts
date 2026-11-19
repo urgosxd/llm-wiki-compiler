@@ -8,6 +8,7 @@ import { extractionModel } from "./llm/endpoints.js";
 import type { ExtractedEntity, ExtractedRelationship } from "./extraction.js";
 import type { OntologyClassification } from "./ontology.js";
 import type { ClassificationState } from "../schema-open-classification.js";
+import type { OntologyVerdict } from "../schema.js";
 
 /**
  * @file packages/llmwiki-kg/ts/src/core/document-consolidation.ts
@@ -242,10 +243,7 @@ async function insertEntity(
     )
     returning id
   `);
-  const created = inserted[0];
-  if (created === undefined) {
-    throw new Error("insert into ontology_entities returned no row");
-  }
+  const created = onlyRow(inserted, "insert into ontology_entities");
   return created.id;
 }
 
@@ -341,7 +339,11 @@ export async function consolidateEntityRows(
   return nameToId;
 }
 /**
- * `consolidate_relationships` — upsert edges, return how many were written.
+ * `consolidate_relationships` — upsert edges, report what they became.
+ *
+ * Returns the same {@link RelationshipWriteOutcome} its `…Detailed` sibling returns, because
+ * the class a collision decided is only observable there: a caller that needs to say how
+ * many rows are stored `rejected` cannot derive it from the input it passed in.
  *
  * Reproduced from `app/core/consolidation.py`. Three behaviours worth naming:
  *
@@ -365,9 +367,8 @@ export async function consolidateRelationshipRows(
   stackId: string,
   extracted: readonly ConsolidationRelationship[],
   nameToId: ReadonlyMap<string, string>,
-): Promise<number> {
-  const outcome = await consolidateRelationshipRowsDetailed(tx, stackId, extracted, nameToId);
-  return outcome.written;
+): Promise<RelationshipWriteOutcome> {
+  return consolidateRelationshipRowsDetailed(tx, stackId, extracted, nameToId);
 }
 
 /**
@@ -408,6 +409,20 @@ export interface RelationshipWriteOutcome {
   /** How many upserts ran, attempts included, exactly as the oracle counts them. */
   readonly written: number;
   readonly collisions: readonly RelationCollision[];
+  /**
+   * How many DISTINCT relationship rows this pass left stored with class `rejected`.
+   *
+   * Read from the post-write row, not derived from the input: the upsert below returns
+   * `ontology_verdict` with the row it just wrote, so this number is what Postgres stored
+   * and cannot disagree with it. Deriving it from `extracted` would be wrong twice — a
+   * duplicate identity collapses onto one row (`unique_edge_per_stack`), and a refusal
+   * that collides with an acceptance writes the ACCEPTED row (S7) — and re-reading the
+   * rows afterwards would answer a question about a different moment.
+   *
+   * It is a per-call count, so a re-ingest of an earlier chunk reports the refusals it
+   * wrote again. That is deliberate: `written` counts attempts by the same rule.
+   */
+  readonly rejectedRows: number;
 }
 
 /**
@@ -483,43 +498,45 @@ const ACCEPTED_WINS_SET = sql`
   end
 `;
 
+/** The two column values the relationship upsert reports about the row it wrote. */
+type StoredEdgeRow = { readonly id: string; readonly ontology_verdict: OntologyVerdict };
+
 /**
- * Writes one relationship row, through the collision clause that decides its class.
+ * The one row a statement that always produces exactly one row left behind.
  *
- * Extracted from the loop below so the statement and the rule that governs a collision
- * read as one unit rather than two halves of a long function.
+ * A `returning` clause on an insert-or-update yields a row on both paths, so an empty
+ * result means the statement did not do what it says. Swallowing that into `undefined`
+ * would turn a broken write into a missing count.
  *
- * `type` keeps its projection meaning and is NOT rewritten by a classification, so no
- * later update can collide with `unique_edge_per_stack`. The original verb travels in
- * `predicate`, which the trigger copies from `type` when the caller supplied none, and
- * `identity_key` is what keeps two distinct free predicates between the same endpoints
- * apart (S33).
+ * @param rows - What the statement returned.
+ * @param what - The statement, named for the error message.
+ * @returns That row.
+ * @throws {Error} When the statement returned nothing at all.
+ */
+function onlyRow<T>(rows: readonly T[], what: string): T {
+  const row = rows[0];
+  if (row === undefined) throw new Error(`${what} returned no row`);
+  return row;
+}
+
+/**
+ * The relationship insert-or-update, with {@link ACCEPTED_WINS_SET} bound into it.
  *
- * The three ontology columns are bound exactly as the entity insert binds them, so an edge
- * the ontology refused is a ROW with its reason instead of a counter that describes nothing.
+ * A statement builder rather than an inline template so the class rule and the statement
+ * it governs stay readable without pushing {@link upsertRelationshipRow} past the house
+ * function-size limit.
  *
- * ## The class is enforced HERE as well as in memory, because accepted must win
- *
- * `unique_edge_per_stack (stack_id, from_entity_id, to_entity_id, type)` is the very
- * identity this clause collides on, and it admits one row per identity — so a refusal and
- * an acceptance of the same edge cannot both persist, and "both were written" is not an
- * available answer. Enforcing this only in `mergeRelationships` would leave the invariant
- * unprotected against every OTHER writer: that merge sees one extraction, while this
- * statement sees every ingest, so a re-ingest of an earlier chunk would be free to flip the
- * class. {@link ACCEPTED_WINS_SET} is the rule; this statement is where it is applied.
- *
- * @param tx - Transaction carrying the write.
  * @param stackId - Stack the edge belongs to.
  * @param ids - The endpoint row ids the folded names resolved to.
  * @param relationship - The folded relationship, with the class its row must carry.
+ * @returns The statement, already bound.
  */
-async function upsertRelationshipRow(
-  tx: DatabaseHandle,
+function relationshipUpsertSql(
   stackId: string,
   ids: { readonly fromId: string; readonly toId: string },
   relationship: ConsolidationRelationship,
-): Promise<void> {
-  await tx.execute(sql`
+) {
+  return sql`
     insert into ontology_relationships (
       stack_id, from_entity_id, to_entity_id, type,
       description, confidence, extracted_by_model, source_kind, pipeline,
@@ -548,7 +565,57 @@ async function upsertRelationshipRow(
         else ontology_relationships.description
       end,
       ${ACCEPTED_WINS_SET}
-  `);
+    returning id, ontology_verdict
+  `;
+}
+
+/**
+ * Writes one relationship row, through the collision clause that decides its class.
+ *
+ * Extracted from the loop below so the statement and the rule that governs a collision
+ * read as one unit rather than two halves of a long function.
+ *
+ * `type` keeps its projection meaning and is NOT rewritten by a classification, so no
+ * later update can collide with `unique_edge_per_stack`. The original verb travels in
+ * `predicate`, which the trigger copies from `type` when the caller supplied none, and
+ * `identity_key` is what keeps two distinct free predicates between the same endpoints
+ * apart (S33).
+ *
+ * The three ontology columns are bound exactly as the entity insert binds them, so an edge
+ * the ontology refused is a ROW with its reason instead of a counter that describes nothing.
+ *
+ * ## The class is enforced HERE as well as in memory, because accepted must win
+ *
+ * `unique_edge_per_stack (stack_id, from_entity_id, to_entity_id, type)` is the very
+ * identity this clause collides on, and it admits one row per identity — so a refusal and
+ * an acceptance of the same edge cannot both persist, and "both were written" is not an
+ * available answer. Enforcing this only in `mergeRelationships` would leave the invariant
+ * unprotected against every OTHER writer: that merge sees one extraction, while this
+ * statement sees every ingest, so a re-ingest of an earlier chunk would be free to flip the
+ * class. {@link ACCEPTED_WINS_SET} is the rule; this statement is where it is applied.
+ *
+ * ## Why the write reports the row back
+ *
+ * The `returning` clause is what makes the stored class OBSERVABLE to the caller: a
+ * collision decides the class in SQL, so the caller cannot compute it from its own input,
+ * and a follow-up `select` would answer about a different moment. The row this statement
+ * returns is the row the graph now holds.
+ *
+ * @param tx - Transaction carrying the write.
+ * @param stackId - Stack the edge belongs to.
+ * @param ids - The endpoint row ids the folded names resolved to.
+ * @param relationship - The folded relationship, with the class its row must carry.
+ * @returns The row's id and the class Postgres stored for it.
+ */
+async function upsertRelationshipRow(
+  tx: DatabaseHandle,
+  stackId: string,
+  ids: { readonly fromId: string; readonly toId: string },
+  relationship: ConsolidationRelationship,
+): Promise<{ readonly id: string; readonly verdict: OntologyVerdict }> {
+  const rows = await tx.execute<StoredEdgeRow>(relationshipUpsertSql(stackId, ids, relationship));
+  const { id, ontology_verdict: verdict } = onlyRow(rows, "upsert into ontology_relationships");
+  return { id, verdict };
 }
 
 /**
@@ -559,7 +626,7 @@ async function upsertRelationshipRow(
  * @param stackId - Stack the edges belong to.
  * @param extracted - The folded relationships, in extraction order.
  * @param nameToId - Folded entity name → entity row id.
- * @returns The attempt count and one record per absorbed assertion.
+ * @returns The attempt count, one record per absorbed assertion, and the rejected-row count.
  */
 export async function consolidateRelationshipRowsDetailed(
   tx: DatabaseHandle,
@@ -570,6 +637,9 @@ export async function consolidateRelationshipRowsDetailed(
   await bindCallerStack(tx, stackId, null);
   let written = 0;
   const collisions: RelationCollision[] = [];
+  // Keyed by ROW id, so two assertions that fold onto one row are counted once, and the
+  // LAST returned class wins: that is the class the row ended the pass with.
+  const verdictByRow = new Map<string, OntologyVerdict>();
 
   for (const relationship of extracted) {
     const fromId = nameToId.get(relationship.fromEntityName.toLowerCase());
@@ -589,11 +659,16 @@ export async function consolidateRelationshipRowsDetailed(
       });
     }
 
-    await upsertRelationshipRow(tx, stackId, { fromId, toId }, relationship);
+    const row = await upsertRelationshipRow(tx, stackId, { fromId, toId }, relationship);
+    verdictByRow.set(row.id, row.verdict);
     written += 1;
   }
 
-  return { written, collisions };
+  let rejectedRows = 0;
+  for (const verdict of verdictByRow.values()) {
+    if (verdict === "rejected") rejectedRows += 1;
+  }
+  return { written, collisions, rejectedRows };
 }
 
 /** What the compiler knows about a source it wants to register as a document. */

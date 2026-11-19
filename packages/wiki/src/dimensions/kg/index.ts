@@ -220,6 +220,14 @@ interface KgHandle {
   /** Triplets the declared ontology turned away; empty when none was supplied. */
   readonly rejected: readonly KgRejection[];
   /**
+   * Relationship rows `commit` left stored with class `rejected`.
+   *
+   * Assigned by the write, never computed from {@link KgHandle.relationships}: the class a
+   * collision decides lives in SQL, so only the write can report it. Absent on a run that
+   * wrote nothing at all, which is why the summary reads it as `0`.
+   */
+  storedRejectedRows?: number;
+  /**
    * Chunks whose extraction failed after every retry was spent.
    *
    * Carried so the commit summary can say a document was extracted from SOME of
@@ -383,17 +391,45 @@ function ontologyArgs(ontology: Ontology | undefined): [] | [Ontology] {
 }
 
 /**
- * Renders the rejection count for a commit summary, or nothing when clean.
+ * Renders the rejection counts for a commit summary, or nothing when clean.
  *
  * A summary is the only per-document signal a caller sees without querying the
  * graph, so a run that silently dropped a third of its triplets must not read
  * the same as a run that found only a third.
  *
+ * ## Why there are TWO numbers, and why they are not promised to be equal
+ *
+ * The first count is TRIPLETS the classifier refused. The second is relationship
+ * ROWS this ingest stored with class `rejected`, read from the write itself. A
+ * reader can check the second against the graph; the first alone was a claim with
+ * nothing behind it. The two disagree legitimately, in three measured ways:
+ *
+ * 1. **A duplicate identity collapses.** `unique_edge_per_stack
+ *    (stack_id, from_entity_id, to_entity_id, type)` admits one row per identity, and
+ *    `mergeRelationships` (`core/graph-extraction.ts`) folds two triplets naming the same
+ *    subject, relation and object before the write sees them — so two refusals are two
+ *    triplets and ONE row.
+ * 2. **An accepted triplet on the same identity wins the row.** S7's rule —
+ *    `ACCEPTED_WINS_SET` in `core/document-consolidation.ts` — stores the accepted row
+ *    when one identity is both refused and admitted, so a refusal can be counted with no
+ *    rejected row to show for it.
+ * 3. **A re-ingest does not move a stored class.** The relationship upsert never
+ *    downgrades an acceptance, and `updateEntity` (`core/document-consolidation.ts`) runs
+ *    only on NEW corroboration, so what a replay's classifier decides is not what the row
+ *    already stores: a refusal is counted while the row it names stays accepted, and a
+ *    byte-identical replay reports the same refusals again over a graph it did not move.
+ *
+ * All three are why the line names two counts with two nouns instead of asserting an
+ * equality the schema makes false.
+ *
  * @param rejected - Triplets the ontology turned away.
+ * @param storedRows - Relationship rows the same ingest stored as `rejected`.
  * @returns A leading-comma fragment, or an empty string when nothing was rejected.
  */
-function rejectionNote(rejected: readonly KgRejection[]): string {
-  return rejected.length === 0 ? "" : `, ${rejected.length} triplets rejected by ontology`;
+function rejectionNote(rejected: readonly KgRejection[], storedRows: number): string {
+  if (rejected.length === 0) return "";
+  const stored = `${pluralize(storedRows, "relationship row")} stored as rejected`;
+  return `, ${rejected.length} triplets rejected by ontology, ${stored}`;
 }
 
 /**
@@ -588,6 +624,7 @@ function detectOnlyHandle(
     entities: [],
     relationships: [],
     rejected: [],
+    // A detect-only handle records nothing, so `storedRejectedRows` stays absent.
     failedChunks: 0,
     mangledChunks: 0,
     schemaViolations: 0,
@@ -635,7 +672,7 @@ function summaryFor(kind: SummaryKind, handle: KgHandle): string {
   const counts = `${chunkCount} chunks, ${handle.entities.length} entities`;
   const head =
     kind === "dry-run" ? `kg:dry-run(${counts}${dryRunNote(handle.dryRunReport)})` : `kg:${counts}`;
-  return `${head}${rejectionNote(handle.rejected)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}${reuseNote(handle.reusedChunks, handle.extractedChunks)}`;
+  return `${head}${rejectionNote(handle.rejected, handle.storedRejectedRows ?? 0)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}${reuseNote(handle.reusedChunks, handle.extractedChunks)}`;
 }
 
 /**
@@ -700,12 +737,12 @@ async function writeGraphRows(
     handle.documentId,
     handle.entities,
   );
-  await consolidateRelationshipRows(
-    tx,
-    options.stackId,
-    handle.relationships,
-    nameToId,
+  const outcome = await consolidateRelationshipRows(
+    tx, options.stackId, handle.relationships, nameToId,
   );
+  // Carried from the write, for the summary in {@link rejectionNote}: the class a
+  // collision decided is only observable in the row Postgres returned.
+  handle.storedRejectedRows = outcome.rejectedRows;
   // LAST, and in the SAME transaction: the graph write and the record of what was
   // extracted for this source cannot disagree, and a rolled-back commit leaves no hash
   // claiming an extraction that never landed.

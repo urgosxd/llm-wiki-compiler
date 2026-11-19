@@ -95,6 +95,9 @@ beforeEach(() => {
   // The model the operator named: `prepare` refuses a model nobody chose, so
   // this suite states that wiring too and measures the ontology path instead.
   vi.stubEnv("LLMWIKI_EMBEDDING_MODEL", "test-model-not-real");
+  // The summary now carries the rejected-row count the WRITE reported (S6), so the stub
+  // answers in the shape the real write returns instead of `undefined`.
+  consolidateRelationshipRows.mockResolvedValue({ written: 0, collisions: [], rejectedRows: 0 });
 });
 
 describe("kg dimension with a declared ontology", () => {

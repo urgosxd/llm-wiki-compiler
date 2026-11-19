@@ -112,7 +112,10 @@ beforeEach(() => {
     transaction: (fn: (tx: unknown) => Promise<void>) => fn(GRAPH_TX),
   });
   consolidateEntityRows.mockResolvedValue(new Map([["Alpha", "id-alpha"]]));
-  consolidateRelationshipRows.mockResolvedValue(undefined);
+  // The dimension now carries the write's own rejected-row count into its summary, so the
+  // stub answers with the shape the real write returns. Load-bearing: a test that reads the
+  // summary is asserting a number the write reported, which is the point of S6.
+  consolidateRelationshipRows.mockResolvedValue({ written: 1, collisions: [], rejectedRows: 0 });
   // Postgres owns the document id; the adapter must adopt it, never invent it.
   registerDocumentRow.mockResolvedValue("row-id-from-postgres");
 });

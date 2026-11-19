@@ -58,8 +58,17 @@ import { testDatabaseUrl } from "../fixtures/test-database.js";
 const harness = await createKgPostgresHarness("kg-e2e");
 const { db, stackId, reachable } = harness;
 
+/**
+ * A SECOND Stack, for the status-line cases at the end of this file.
+ *
+ * Its own Stack on purpose: those cases ingest refusals into the graph, and the cases above
+ * assert this suite's Stack holds exactly three entities and one edge.
+ */
+const statusHarness = await createKgPostgresHarness("kg-status-line");
+
 afterAll(async () => {
   await harness.cleanup();
+  await statusHarness.cleanup();
 });
 
 /** A source identity unique to this suite, so assertions cannot collide. */
@@ -211,4 +220,139 @@ describe("the kg dimension end to end keeps Stacks apart", () => {
       await other.cleanup();
     }
   }, 90_000);
+});
+
+/**
+ * Ingests one stubbed extraction into {@link statusHarness} and returns its summary.
+ *
+ * @param source - A source identity unique to the case.
+ * @param payload - The tool-call payload the fake gateway answers with.
+ * @returns The commit summary under test.
+ */
+async function statusSummary(source: string, payload: unknown): Promise<string> {
+  setToolResponse([payload]);
+  const statusDimension = createKgDimension({
+    stackId: statusHarness.stackId,
+    stackName: "kg-status-line",
+    databaseUrl: testDatabaseUrl(),
+  });
+  const prepared = await statusDimension.prepare(input(source, "Status"));
+  const committed = await statusDimension.commit(prepared);
+  return committed.summary;
+}
+
+/**
+ * How many of that Stack's edges carry one verb and one class.
+ *
+ * @param type - The folded verb.
+ * @param verdict - `accepted` or `rejected`.
+ * @returns The row count.
+ */
+async function storedEdges(type: string, verdict: string): Promise<number> {
+  const rows = (await statusHarness.db.execute(
+    `select count(*)::int as n from ontology_relationships
+     where stack_id = '${statusHarness.stackId}' and type = '${type}' and ontology_verdict = '${verdict}'`,
+  )) as { n: number }[];
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Two refusals of ONE identity: two triplets, one row.
+ *
+ * A named function rather than an inline arrow because this file's `max-lines-per-function`
+ * allowance is already spent: three 15-line callbacks inside one `describe` would breach the
+ * limit for the describe's own callback instead.
+ *
+ * @returns Nothing; every assertion is in the body.
+ */
+async function reportsBothNumbersWhenRefusalsCollapse(): Promise<void> {
+  // The SAME identity twice: `unique_edge_per_stack` admits one row, and
+  // `mergeRelationships` folds the pair before the write ever sees it. The triplet count is
+  // 2 because the classifier refused two triplets.
+  const refused = {
+    subject: { name: "Cache", type: "SYSTEM" },
+    relation: { type: "OWNS" },
+    object: { name: "Ledger", type: "SYSTEM" },
+  };
+
+  const summary = await statusSummary(`https://e2e.test/collapse-${statusHarness.stackId}.md`, {
+    triplets: [refused, refused],
+  });
+
+  expect(summary).toBe(
+    "kg:1 chunks, 2 entities, 2 triplets rejected by ontology, 1 relationship row stored as rejected",
+  );
+  // The line is only worth anything if the row it names EXISTS, and there is exactly ONE:
+  // the collapse is what makes 2 and 1 both true at the same time.
+  expect(await storedEdges("OWNS", "rejected")).toBe(1);
+}
+
+/**
+ * One identity refused once and admitted once: the refusal is counted, the row is accepted.
+ *
+ * @returns Nothing; every assertion is in the body.
+ */
+async function reportsTheRefusalThatLeftNoRejectedRow(): Promise<void> {
+  // Same names, same verb, different subject type: the accepted triplet passes the pair
+  // constraint and the other one does not, so accepted-wins stores the ACCEPTED row. Uses a
+  // verb the case above does not, so `storedEdges` reads only this case's edges.
+  const admitted = {
+    subject: { name: "Ada", type: "PERSON" },
+    relation: { type: "WORKS_AT" },
+    object: { name: "Initech", type: "COMPANY" },
+  };
+  const refused = {
+    subject: { name: "Ada", type: "CONCEPT" },
+    relation: { type: "WORKS_AT" },
+    object: { name: "Initech", type: "COMPANY" },
+  };
+
+  const summary = await statusSummary(`https://e2e.test/wins-${statusHarness.stackId}.md`, {
+    // The refused triplet comes FIRST, so a fold-order rule could not fake this.
+    triplets: [refused, admitted],
+  });
+
+  expect(summary).toBe(
+    "kg:1 chunks, 2 entities, 1 triplets rejected by ontology, 0 relationship rows stored as rejected",
+  );
+  expect(await storedEdges("WORKS_AT", "rejected")).toBe(0);
+  expect(await storedEdges("WORKS_AT", "accepted")).toBe(1);
+}
+
+/**
+ * A run with nothing refused renders the head alone, byte for byte as it read before S6.
+ *
+ * @returns Nothing; every assertion is in the body.
+ */
+async function keepsACleanSummaryUnchanged(): Promise<void> {
+  const summary = await statusSummary(`https://e2e.test/clean-${statusHarness.stackId}.md`, {
+    triplets: [
+      {
+        subject: { name: "Gateway", type: "TECHNOLOGY" },
+        relation: { type: "USES" },
+        object: { name: "Nomic Embed", type: "TECHNOLOGY" },
+      },
+    ],
+    entities: [{ name: "Rate Limiting", type: "CONCEPT" }],
+  });
+
+  expect(summary).toBe("kg:1 chunks, 3 entities");
+}
+
+describe("the kg commit summary counts triplets AND the rows they became", () => {
+  it.skipIf(!reachable)(
+    "reports both numbers when two refusals collapse",
+    reportsBothNumbersWhenRefusalsCollapse,
+    60_000,
+  );
+  it.skipIf(!reachable)(
+    "reports a refusal that left no rejected row",
+    reportsTheRefusalThatLeftNoRejectedRow,
+    60_000,
+  );
+  it.skipIf(!reachable)(
+    "keeps a clean summary exactly as it reads today",
+    keepsACleanSummaryUnchanged,
+    60_000,
+  );
 });
