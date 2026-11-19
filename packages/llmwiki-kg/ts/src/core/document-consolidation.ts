@@ -29,6 +29,8 @@ type EntityLookupRow = {
   id: string;
   confidence: number;
   description: string | null;
+  /** The class the row ALREADY holds, which is what a later verdict has to be compared against. */
+  ontology_verdict: OntologyVerdict;
 };
 
 /**
@@ -110,18 +112,45 @@ async function findExistingEntity(
 ): Promise<EntityLookupRow | undefined> {
   if (entity.identityKey !== undefined) {
     const byKey = await tx.execute<EntityLookupRow>(sql`
-      select id, confidence, description
+      select id, confidence, description, ontology_verdict
       from ontology_entities
       where stack_id = ${stackId} and identity_key = ${entity.identityKey}
     `);
     return byKey[0];
   }
   const rows = await tx.execute<EntityLookupRow>(sql`
-    select id, confidence, description
+    select id, confidence, description, ontology_verdict
     from ontology_entities
     where stack_id = ${stackId} and lower(name) = lower(${entity.name})
   `);
   return rows[0];
+}
+
+/**
+ * Notes when this run's verdict REFUSES an identity the graph already stores as accepted.
+ *
+ * The one condition the disagreement record counts (S9), written once so the entity and the
+ * relationship pass cannot disagree about what a disagreement is. It is deliberately NOT
+ * `stored rejected, incoming accepted`: the upgrade direction IS performed by the class rules
+ * and leaves its own trace, while this direction is the one the rules keep silently — the
+ * stored acceptance survives and its reason is cleared, so the row cannot carry the news.
+ *
+ * Keyed by ROW id through `into`, so two assertions folding onto one identity count once.
+ *
+ * @param stored - The row the identity already occupies, with the class it holds.
+ * @param incoming - The class this run's extraction gave the identity.
+ * @param into - The set of row ids this pass refused while they held an acceptance.
+ */
+function noteRefusal(
+  stored: { readonly id: string; readonly ontology_verdict: OntologyVerdict } | undefined,
+  incoming: OntologyVerdict | undefined,
+  into: Set<string>,
+): void {
+  // An absent incoming verdict is bound as `accepted` by every insert below, so it is read
+  // the same way here rather than as a third state.
+  if (stored?.ontology_verdict === "accepted" && (incoming ?? "accepted") === "rejected") {
+    into.add(stored.id);
+  }
 }
 
 /**
@@ -341,17 +370,20 @@ async function recordContribution(
  * Like {@link consolidateRelationshipRows}, both writes report the row they stored: the
  * return value is the name→id map the call has always produced, now also carrying
  * `rejectedRows`, so a caller can say how many entity rows are stored `rejected` instead of
- * deriving it from the extraction it handed in.
+ * deriving it from the extraction it handed in, and `disagreements`, so a caller can say how
+ * many accepted rows this run's verdicts REFUSED without being able to change them (S9).
  *
  * @returns lowercased entity name → entity id, consumed by
- *   {@link consolidateRelationshipRows}, carrying the rejected-row count.
+ *   {@link consolidateRelationshipRows}, carrying the rejected-row and disagreement counts.
  */
 export async function consolidateEntityRows(
   tx: DatabaseHandle,
   stackId: string,
   documentId: string,
   extracted: readonly ConsolidationEntity[],
-): Promise<Map<string, string> & { readonly rejectedRows: number }> {
+): Promise<
+  Map<string, string> & { readonly rejectedRows: number; readonly disagreements?: number }
+> {
   // Bind the tenant before any write: every statement below is tenant-scoped, so under
   // RLS an unbound insert is refused. `stackId` is already this call's own filter.
   await bindCallerStack(tx, stackId, null);
@@ -360,9 +392,12 @@ export async function consolidateEntityRows(
   // Keyed by ROW id, so two extractions that fold onto one entity are counted once, and the
   // LAST returned class wins: that is the class the row ended the pass with.
   const verdictByRow = new Map<string, OntologyVerdict>();
+  // Also keyed by ROW id, and for the same reason: identities, not assertions.
+  const disagreedIds = new Set<string>();
 
   for (const entity of extracted) {
     const existing = await findExistingEntity(tx, stackId, entity);
+    noteRefusal(existing, entity.ontologyVerdict, disagreedIds);
     // The write that decided this row's class, or `undefined` when nothing was written for
     // it — an insertion and an update report their own stored verdict, and the update one is
     // what makes a rejection count only when the row ended up rejected.
@@ -391,11 +426,15 @@ export async function consolidateEntityRows(
     if (written !== undefined) verdictByRow.set(entityId, written.verdict);
   }
 
-  // The map IS the return, so the count rides on it: every existing caller binds this value
+  // The map IS the return, so the counts ride on it: every existing caller binds this value
   // directly (`Map` methods, `ReadonlyMap` assignability), and turning it inside out into an
-  // outcome object would break consumers this change is not about. The extra member is what
-  // only the writes could answer — how many DISTINCT entity rows this pass left `rejected`.
-  return Object.assign(nameToId, { rejectedRows: rejectedRowCount(verdictByRow) });
+  // outcome object would break consumers this change is not about. The extra members are what
+  // only the reads and writes could answer — how many DISTINCT entity rows this pass left
+  // `rejected`, and how many stored acceptances its verdicts refused without overturning.
+  return Object.assign(nameToId, {
+    rejectedRows: rejectedRowCount(verdictByRow),
+    disagreements: disagreedIds.size,
+  });
 }
 /**
  * `consolidate_relationships` — upsert edges, report what they became.
@@ -482,6 +521,15 @@ export interface RelationshipWriteOutcome {
    * wrote again. That is deliberate: `written` counts attempts by the same rule.
    */
   readonly rejectedRows: number;
+  /**
+   * How many RELATIONSHIP identities this pass refused while the graph stored them accepted.
+   *
+   * The direction {@link ACCEPTED_WINS_SET} keeps silently: the stored acceptance survives,
+   * its reason and offending type are cleared, and the row therefore reads `accepted`. Keyed
+   * by row id, so an identity asserted twice counts once. Present on every value this
+   * function returns; optional only so a hand-built value need not state it.
+   */
+  readonly disagreements?: number;
 }
 
 /**
@@ -504,17 +552,22 @@ function incomingIdentityKey(relationship: ConsolidationRelationship): string {
 /**
  * The stored row already occupying this edge's `(stack, from, to, type)` slot.
  *
+ * `ontology_verdict` is read here because the class rule is applied against it: whether this
+ * run's verdict DISAGREES with the stored one is answerable only from both sides, and this is
+ * the one read that holds the stored side before the upsert overwrites nothing (S9).
+ *
  * @param tx - Transaction carrying the read.
  * @param edge - The endpoint ids and the folded label.
- * @returns The stored identity key and predicate, or `undefined` when the slot is free.
+ * @returns The stored row's id, identity key, predicate and class, or `undefined` when the
+ *   slot is free.
  */
 async function existingEdge(
   tx: DatabaseHandle,
   stackId: string,
   edge: { readonly fromId: string; readonly toId: string; readonly type: string },
-): Promise<{ identity_key: string; predicate: string | null } | undefined> {
-  const rows = await tx.execute<{ identity_key: string; predicate: string | null }>(sql`
-    select identity_key, predicate from ontology_relationships
+): Promise<EdgeLookupRow | undefined> {
+  const rows = await tx.execute<EdgeLookupRow>(sql`
+    select id, identity_key, predicate, ontology_verdict from ontology_relationships
     where stack_id = ${stackId}
       and from_entity_id = ${edge.fromId}
       and to_entity_id = ${edge.toId}
@@ -522,6 +575,15 @@ async function existingEdge(
   `);
   return rows[0];
 }
+
+/** The stored row a colliding edge already owns, before this run's verdict is applied. */
+type EdgeLookupRow = {
+  readonly id: string;
+  readonly identity_key: string;
+  readonly predicate: string | null;
+  /** The class the row holds NOW, which the collision clause may refuse to change. */
+  readonly ontology_verdict: OntologyVerdict;
+};
 
 /**
  * The `do update set` fragment that makes an acceptance survive a collision.
@@ -712,7 +774,8 @@ async function upsertRelationshipRow(
  * @param stackId - Stack the edges belong to.
  * @param extracted - The folded relationships, in extraction order.
  * @param nameToId - Folded entity name → entity row id.
- * @returns The attempt count, one record per absorbed assertion, and the rejected-row count.
+ * @returns The attempt count, one record per absorbed assertion, and the two counts only the
+ *   writes and reads could answer: rejected rows, and stored acceptances this pass refused.
  */
 export async function consolidateRelationshipRowsDetailed(
   tx: DatabaseHandle,
@@ -726,6 +789,9 @@ export async function consolidateRelationshipRowsDetailed(
   // Keyed by ROW id, so two assertions that fold onto one row are counted once, and the
   // LAST returned class wins: that is the class the row ended the pass with.
   const verdictByRow = new Map<string, OntologyVerdict>();
+  // The stored acceptances this pass's verdicts refused. Keyed by row id for the same reason
+  // `verdictByRow` is: the count is of IDENTITIES, not of assertions.
+  const disagreedIds = new Set<string>();
 
   for (const relationship of extracted) {
     const fromId = nameToId.get(relationship.fromEntityName.toLowerCase());
@@ -744,13 +810,17 @@ export async function consolidateRelationshipRowsDetailed(
         storedPredicate: stored.predicate ?? relationship.type,
       });
     }
+    // A stored row occupying this identity IS the upsert's conflict target, so this is the
+    // exact condition under which {@link ACCEPTED_WINS_SET} keeps the old class.
+    noteRefusal(stored, relationship.ontologyVerdict, disagreedIds);
 
     const row = await upsertRelationshipRow(tx, stackId, { fromId, toId }, relationship);
     verdictByRow.set(row.id, row.verdict);
     written += 1;
   }
 
-  return { written, collisions, rejectedRows: rejectedRowCount(verdictByRow) };
+  const rejectedRows = rejectedRowCount(verdictByRow);
+  return { written, collisions, rejectedRows, disagreements: disagreedIds.size };
 }
 
 /** What the compiler knows about a source it wants to register as a document. */

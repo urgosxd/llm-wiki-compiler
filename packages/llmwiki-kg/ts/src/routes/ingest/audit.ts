@@ -30,6 +30,15 @@
  * for "no report" and a parsed object otherwise, so a consumer can tell them apart
  * rather than reading a missing report as a clean run.
  *
+ * ## A fifth section, for a question neither of the others can answer
+ *
+ * `verdict_disagreements` sits beside them and holds the identities one run REFUSED while
+ * the graph already stored them `accepted`. It is not an `ontology` field on purpose: that
+ * section's key set is a pinned contract, and its `rejected` counts what the declaration
+ * turned away — not what turned away and was then kept anyway because `ACCEPTED_WINS_SET`
+ * protects a stored acceptance (S9). Both counts are always written when the section is
+ * present, because the presence itself already says a disagreement happened.
+ *
  * ## A second section, for a different question
  *
  * `extraction` sits beside `ontology` and holds the degradation counters the
@@ -523,6 +532,99 @@ export function buildOpenAudit(facts: OpenExtractionFacts): OpenAudit | undefine
       dropped: truncation.dropped,
     })),
   });
+}
+
+/**
+ * The `jsonb` key the refused-but-kept verdict section lives under.
+ *
+ * A SIBLING of the four above, and deliberately not a field inside `ontology`: that
+ * section's key set is a pinned contract, and this answers a different question — not
+ * "what did the declaration turn away" but "what did this run turn away that the graph
+ * KEEPS ANYWAY, because the identity already held an acceptance".
+ */
+const VERDICT_DISAGREEMENTS_AUDIT_KEY = "verdict_disagreements";
+
+/**
+ * How many identities one run refused while the graph stored them accepted, per table.
+ *
+ * Keyed by TABLE because that is the only split the row set has: `audit.ontology.rejected`
+ * is a triplet count with no per-table information, so a reader who wants to know whether
+ * an edge or a node was refused needs these two numbers. Both are always written — the
+ * section's own presence already says a disagreement happened, so a `0` here is a
+ * measurement rather than the absent-when-zero rule's placeholder.
+ *
+ * This is the record S9 requires. `ACCEPTED_WINS_SET` keeps the stored acceptance, clears
+ * its reason and offending type, and leaves the row reading `accepted` with no prose — a
+ * row that tells an operator their tightened ontology changed nothing about it, and gives
+ * no sign that the tightening was evaluated at all.
+ */
+const VerdictDisagreementsSchema = z.object({
+  entity: z.number().int().nonnegative(),
+  relationship: z.number().int().nonnegative(),
+});
+
+/** A validated disagreement record. */
+type VerdictDisagreements = z.infer<typeof VerdictDisagreementsSchema>;
+
+/**
+ * Builds the section, or nothing when every verdict this run took agreed with what is stored.
+ *
+ * Absent-when-empty like the extraction and open sections, so a run that disagreed nowhere
+ * writes the byte-identical blob it wrote before this section existed. The WRITER below
+ * removes the key on every run for the mirror-image reason: a record left behind by an
+ * earlier run would be a claim about a run that no longer describes the graph.
+ *
+ * @param counts - The two per-table counts the consolidation pass reported.
+ * @returns The validated section, or `undefined` when both counts are zero.
+ */
+function buildVerdictDisagreements(
+  counts: { readonly entity: number; readonly relationship: number },
+): VerdictDisagreements | undefined {
+  if (counts.entity <= 0 && counts.relationship <= 0) return undefined;
+  return VerdictDisagreementsSchema.parse({
+    entity: counts.entity,
+    relationship: counts.relationship,
+  });
+}
+
+/**
+ * Records this run's refused-but-kept verdicts on the document row.
+ *
+ * ## Why this is not part of {@link writeIngestAudit}
+ *
+ * The fact is decided by the CANDIDATE write — `routes/ingest/compile-chunks.ts` consolidates
+ * the rows and reports the counts — which commits BEFORE any classifier is asked anything,
+ * while the per-run report is assembled from the decision stage. So this section is written
+ * by the module that owns the write it describes, in that write's own transaction: the
+ * record cannot outlive the rows, and it does not depend on a classifier running at all.
+ *
+ * Two writers share this column, so neither may erase the other's keys: each subtracts the
+ * keys it owns and re-adds them from its own run. This one owns exactly one key, and it
+ * removes it before deciding whether to write it, so a run that agrees everywhere CLEARS the
+ * previous run's record instead of leaving it to look like this run's.
+ *
+ * @param tx - The transaction that wrote the rows this record describes.
+ * @param docId - Document the run compiled.
+ * @param counts - The two per-table disagreement counts.
+ */
+export async function writeVerdictDisagreements(
+  tx: Database,
+  docId: string,
+  counts: { readonly entity: number; readonly relationship: number },
+): Promise<void> {
+  const section = buildVerdictDisagreements(counts);
+  // A null binds SQL NULL, which is what makes the CASE below drop the key rather than
+  // store an empty object as a present section.
+  const json = section === undefined ? null : JSON.stringify(section);
+  await tx.execute(sql`
+    update stack_documents
+    set audit = (coalesce(audit, '{}'::jsonb) - ${VERDICT_DISAGREEMENTS_AUDIT_KEY}::text)
+      || case
+           when ${json}::text is null then '{}'::jsonb
+           else jsonb_build_object(${VERDICT_DISAGREEMENTS_AUDIT_KEY}::text, ${json}::text::jsonb)
+         end
+    where id = ${docId}
+  `);
 }
 
 /**

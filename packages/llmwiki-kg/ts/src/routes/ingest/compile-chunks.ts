@@ -63,6 +63,7 @@ import {
   buildOntologyAudit,
   buildOpenAudit,
   buildUnconfiguredClassificationAudit,
+  writeVerdictDisagreements,
 } from "./audit.js";
 import type { ClassificationAudit, ExtractionAudit, OntologyAudit, OpenAudit } from "./audit.js";
 import { buildCandidateSpans, originalPredicate, relationRef } from "./candidates.js";
@@ -88,6 +89,7 @@ import type {
   ConsolidationEntity,
   ConsolidationRelationship,
   RelationCollision,
+  RelationshipWriteOutcome,
 } from "../../core/document-consolidation.js";
 import type { Database } from "../../db.js";
 import { loadKnownIdentities, toVectorLiteral } from "./request.js";
@@ -493,6 +495,16 @@ function collisionEntries(
  * are committed before the classifier is called — and what makes an interrupted run
  * recoverable instead of invisible.
  *
+ * ## The refused-but-kept verdicts are recorded HERE, and not by the audit report
+ *
+ * `ACCEPTED_WINS_SET` keeps a stored acceptance when a recompile refuses the same
+ * identity, and clears the reason with it, so the row cannot carry the disagreement (S9).
+ * The two consolidation passes report it — `disagreements`, keyed by row id — and it is
+ * written in THIS transaction, beside the rows it describes, so the record cannot outlive
+ * them and does not depend on a classifier running. It is written on every run, because
+ * the writer removes a previous run's key: a record that survived a run which agreed
+ * everywhere would be a claim about a graph that no longer exists.
+ *
  * @param tx - The transaction the candidate write runs in.
  * @param params - The ingest request.
  * @param extraction - The folded extraction result.
@@ -538,7 +550,30 @@ async function persistCandidates(
     },
     collisionEntries(params.docId, outcome.collisions),
   );
+  await writeVerdictDisagreements(tx, params.docId, disagreementCounts(entityIds, outcome));
   return { entityIds, writtenRelationships: outcome.written };
+}
+
+/** The entity pass's return value, with the counts only its writes could answer riding on it. */
+type EntityWriteMap = ReadonlyMap<string, string> & { readonly disagreements?: number };
+
+/**
+ * The per-table disagreement counts one candidate write reported, shaped for the audit.
+ *
+ * A projection rather than two inline expressions, because the two counts come from two
+ * different return values and the fallback is the same decision in both cases: a caller
+ * that only constructs a partial value need not state the member, while every value these
+ * two functions return does.
+ *
+ * @param entityIds - What the entity pass returned, carrying its disagreement count.
+ * @param outcome - What the relationship pass returned, carrying its own.
+ * @returns The record `writeVerdictDisagreements` stores, keyed by table.
+ */
+function disagreementCounts(
+  entityIds: EntityWriteMap,
+  outcome: RelationshipWriteOutcome,
+): { readonly entity: number; readonly relationship: number } {
+  return { entity: entityIds.disagreements ?? 0, relationship: outcome.disagreements ?? 0 };
 }
 
 /**
