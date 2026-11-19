@@ -15,11 +15,15 @@
  * both consumers work from identical read semantics.
  */
 
+import { readdir } from "fs/promises";
 import path from "path";
-import { safeReadFile, parseFrontmatter } from "../utils/markdown.js";
+import { safeReadFile, parseFrontmatter, slugify } from "../utils/markdown.js";
 import { CONCEPTS_DIR, QUERIES_DIR } from "../utils/constants.js";
 import { extractWikilinkTargets } from "../wiki/collect.js";
 import { parseQualifiedPageId } from "../utils/page-id.js";
+
+/** File extension a wiki page carries. */
+const MD_SUFFIX = ".md";
 
 /** Directories searched (in priority order) when resolving a page slug. */
 const PAGE_DIRS = [CONCEPTS_DIR, QUERIES_DIR];
@@ -98,33 +102,105 @@ export interface PageRecord {
 }
 
 /**
- * The `(directory, page-slug)` pairs one lookup argument addresses, in search order.
+ * Read one page from one directory, reporting it under `reportedSlug`.
  *
- * A BARE slug searches the documented concepts-then-queries order. A QUALIFIED id
- * (`<namespace>/<page-part>`, the form `links[].slug` carries) addresses exactly one
- * directory: an explicit namespace is never second-guessed, and a namespace that is
- * not one of the wiki's directories addresses nothing at all — which is why it yields
- * an empty list rather than falling back to the bare order.
+ * `pageSlug` is the STEM on disk; `reportedSlug` is the argument the caller used, so a
+ * qualified read answers with the id it was given and a bare read with the slug it was
+ * given. Orphaned pages resolve to `null`, the behaviour every caller shares.
  *
- * The page part is used VERBATIM, like the bare slug: this lookup has never slugified
- * or scanned, so a page whose filename stem is title-shaped is addressed by that stem
- * in the qualified form too.
- *
- * @param slug - The lookup argument, bare or qualified.
- * @returns The pairs to try, in order.
+ * @param root - Absolute path to the wiki workspace root.
+ * @param directory - Directory of the page, e.g. `wiki/concepts`.
+ * @param pageSlug - Filename stem on disk.
+ * @param reportedSlug - Value to report as `PageRecord.slug`.
+ * @returns The record, or `null` when the file is unreadable or orphaned.
  */
-function lookupTargets(slug: string): Array<{ directory: string; pageSlug: string }> {
-  const qualified = parseQualifiedPageId(slug);
-  if (qualified === null) {
-    return PAGE_DIRS.map((directory) => ({ directory, pageSlug: slug }));
+async function readPageAt(
+  root: string,
+  directory: string,
+  pageSlug: string,
+  reportedSlug: string,
+): Promise<PageRecord | null> {
+  const content = await safeReadFile(path.join(root, directory, `${pageSlug}.md`));
+  if (!content) return null;
+
+  const { meta, body } = parseFrontmatter(content);
+  if (meta.orphaned) return null;
+
+  const trimmedBody = body.trim();
+  return {
+    slug: reportedSlug,
+    title: typeof meta.title === "string" ? meta.title : pageSlug,
+    summary: typeof meta.summary === "string" ? meta.summary : "",
+    body: trimmedBody,
+    links: pageLinkRefs(trimmedBody),
+  };
+}
+
+/**
+ * Filename stems of the readable pages in one directory, sorted.
+ *
+ * Sorted because `readdir` order is not promised, and the two-pass match below must
+ * not depend on it when two stems slugify to the same target. An absent or unreadable
+ * directory holds no pages — a project without `wiki/queries/` is supported, and
+ * throwing there would turn "no page here" into a failure.
+ *
+ * @param directoryPath - Absolute path to the directory.
+ * @returns Page stems, without the `.md` extension.
+ */
+async function pageStemsIn(directoryPath: string): Promise<string[]> {
+  try {
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(MD_SUFFIX))
+      .map((entry) => entry.name.slice(0, -MD_SUFFIX.length))
+      .sort();
+  } catch {
+    return [];
   }
-  const directory = PAGE_DIRS.find((dir) => path.basename(dir) === qualified.namespace);
-  return directory === undefined ? [] : [{ directory, pageSlug: qualified.pagePart }];
+}
+
+/**
+ * Find the stem in ONE directory that a normalized page part addresses.
+ *
+ * TWO PASSES, and the order is the rule: a page's `slug` is its RAW filename stem,
+ * while a wikilink target is slugified (`normalizeWikilinkTarget`, the one
+ * normalization rule), so a link to a page titled `7. Subdominios DDD` reaches this
+ * lookup as `7-subdominios-ddd` and both directions have to be compared. An exact
+ * stem match therefore wins — the id names that page literally — and only then is the
+ * slugified form tried.
+ *
+ * This MIRRORS `findPageInDirectory` in `packages/wiki/src/viewer/collect.ts:129`
+ * deliberately rather than calling it: that helper matches against an in-memory page
+ * list and is not exported, so reusing it would mean scanning BOTH directories and
+ * building the whole viewer index to answer one `read_page` call, and importing the
+ * viewer into the shared read layer would invert a dependency the export path already
+ * keeps out. The two copies are three lines each and the shared rule is named in both.
+ *
+ * @param directoryPath - Absolute path to the ONE directory to search.
+ * @param target - Normalized page part, e.g. `7-subdominios-ddd`.
+ * @returns The matching stem, or `null` when nothing in this directory answers to it.
+ */
+async function findStemInDirectory(
+  directoryPath: string,
+  target: string,
+): Promise<string | null> {
+  const stems = await pageStemsIn(directoryPath);
+  return stems.find((stem) => stem === target)
+    ?? stems.find((stem) => slugify(stem) === target)
+    ?? null;
 }
 
 /**
  * Locate a page by slug across the priority-ordered page directories,
  * skipping orphaned entries to match the query pipeline's behaviour.
+ *
+ * A BARE slug keeps the direct filename lookup it has always done: concepts, then
+ * queries, exact stem, no scan — its cost and its answers are unchanged.
+ *
+ * A QUALIFIED id searches ONLY the namespace it names (an explicit namespace is never
+ * second-guessed, and a namespace that is not a wiki directory names nothing), and
+ * inside it applies the shared two-pass rule through {@link findStemInDirectory}: an
+ * id the extractor produced resolves even when the page's stem is title-shaped.
  *
  * @param root - Absolute path to the wiki workspace root.
  * @param slug - Page slug without the `.md` extension, or a qualified page id
@@ -132,23 +208,16 @@ function lookupTargets(slug: string): Array<{ directory: string; pageSlug: strin
  * @returns The parsed page record, or `null` if not found or orphaned.
  */
 export async function readPageRecord(root: string, slug: string): Promise<PageRecord | null> {
-  for (const { directory, pageSlug } of lookupTargets(slug)) {
-    const content = await safeReadFile(path.join(root, directory, `${pageSlug}.md`));
-    if (!content) continue;
-
-    const { meta, body } = parseFrontmatter(content);
-    if (meta.orphaned) continue;
-
-    const trimmedBody = body.trim();
-    return {
-      // The argument as the caller wrote it, so a qualified read reports the id it was
-      // given and a bare read reports the slug it was given.
-      slug,
-      title: typeof meta.title === "string" ? meta.title : pageSlug,
-      summary: typeof meta.summary === "string" ? meta.summary : "",
-      body: trimmedBody,
-      links: pageLinkRefs(trimmedBody),
-    };
+  const qualified = parseQualifiedPageId(slug);
+  if (qualified === null) {
+    for (const directory of PAGE_DIRS) {
+      const record = await readPageAt(root, directory, slug, slug);
+      if (record !== null) return record;
+    }
+    return null;
   }
-  return null;
+  const directory = PAGE_DIRS.find((dir) => path.basename(dir) === qualified.namespace);
+  if (directory === undefined) return null;
+  const stem = await findStemInDirectory(path.join(root, directory), qualified.pagePart);
+  return stem === null ? null : readPageAt(root, directory, stem, slug);
 }
