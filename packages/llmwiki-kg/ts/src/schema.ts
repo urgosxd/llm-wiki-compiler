@@ -14,9 +14,11 @@ import {
   vector,
 } from "drizzle-orm/pg-core";
 
-// A value import, not a re-export alone: `entity_source_documents` and `entity_pages` below
-// carry a foreign key to this table, and the thunk needs the binding in scope.
-import { ontologyEntities } from "./schema-kg-ontology.js";
+// Value imports, not a re-export alone: `entity_source_documents` and `entity_pages` below
+// carry a foreign key to `ontology_entities`, and every Stack-keyed table below carries one to
+// `stacks`. Both bindings must be in scope for those thunks, and this is the only direction in
+// which the two modules may import each other by VALUE — see the note below.
+import { ontologyEntities, stacks } from "./schema-kg-ontology.js";
 
 /**
  * Drizzle mirror of `db/schema.sql`.
@@ -43,12 +45,21 @@ import { ontologyEntities } from "./schema-kg-ontology.js";
  * schema mirrors the database, which is the source of truth; the strictness
  * decision belongs to the DTO layer (T0.6), not here.
  *
- * ## Two tables are re-exported rather than declared here
+ * ## Three tables are re-exported rather than declared here
  *
- * `ontology_entities` and `ontology_relationships` are declared in
+ * `stacks`, `ontology_entities` and `ontology_relationships` are declared in
  * `schema-kg-ontology.ts` and re-exported at the end of this module's type surface,
- * so a caller still imports the whole mirror from here. See that module for why the
- * split exists and for the note on its dependency cycle with this one.
+ * so a caller still imports the whole mirror from here — including under the
+ * namespace form `import * as schema from "./schema.js"`.
+ *
+ * ## The value edge between the two modules runs one way
+ *
+ * This module imports `stacks` and `ontology_entities` from `schema-kg-ontology.ts`
+ * by value; `schema-kg-ontology.ts` imports nothing from here but TYPES, which
+ * `verbatimModuleSyntax` erases. That is the same direction `schema-open-classification.ts`
+ * documents, and it is a hard requirement rather than a preference: `stacks` is the foreign-key
+ * target of both ontology tables, so it cannot live on the far side of the edge without
+ * recreating a value-level cycle. See that module for where the anchor sits and why.
  */
 
 /**
@@ -103,75 +114,28 @@ export type {
  * match this label" and is rewritten by the classifier, while this one answers "did the
  * ontology accept this claim" and must survive every later classification pass.
  *
- * Declared here rather than beside the tables that use it, because `schema.ts` is the module
- * every caller already imports the mirror from and this name is part of that surface.
+ * Declared here rather than beside the columns that use it, because a type is erased at compile
+ * time: `schema-kg-ontology.ts` can import it from this module without adding a value-level edge
+ * in the direction that would close a cycle. Every caller keeps importing it from the mirror it
+ * already imports it from.
  */
 export type OntologyVerdict = "accepted" | "rejected";
 
 /**
- * The two knowledge-graph tables live in `schema-kg-ontology.ts`, which is where the ontology
- * verdict columns that pushed this file past its 400-line cap could be added. They are
- * re-exported here so the mirror keeps ONE module surface and every existing import path —
- * including the namespace form `import * as schema from "./schema.js"` — resolves unchanged.
+ * `stacks` and the two knowledge-graph tables live in `schema-kg-ontology.ts`: that is where the
+ * ontology verdict columns that pushed this file past its 400-line cap were added, and `stacks`
+ * is the foreign-key target those tables carry, so it has to sit on the referenced side of the
+ * one-way value edge. All three are re-exported here so the mirror keeps ONE module surface and
+ * every existing import path — including the namespace form `import * as schema from
+ * "./schema.js"` — resolves unchanged.
  *
- * See that module for why its dependency on this one is a cycle and why the cycle is safe.
+ * See that module for why the anchor table sits there and what would reintroduce a cycle.
  */
-export { ontologyEntities, ontologyRelationships } from "./schema-kg-ontology.js";
-
-// ---------------------------------------------------------------------------
-// GROUP 1: Stacks
-// ---------------------------------------------------------------------------
-
-export const stacks = pgTable(
-  "stacks",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    name: text("name").notNull(),
-    domain: text("domain").notNull(),
-    description: text("description"),
-    scope: text("scope").notNull().default("stack"),
-    // Nullable in SQL: default 'incremental' with no NOT NULL.
-    compilationStrategy: text("compilation_strategy").default("incremental"),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
-      .notNull()
-      .defaultNow(),
-    // Inactivation, not deletion (decision 1.3): nine tables reference `stacks(id)` with
-    // `on delete cascade`, so an inactive Stack keeps its row and its unique `domain`
-    // instead of being deleted. Declared in `db/schema.sql`'s CREATE TABLE and added to a
-    // database that already exists by `db/migration_stack_active.sql`.
-    active: boolean("active").notNull().default(true),
-    // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE.
-    synthesizeDescriptions: boolean("synthesize_descriptions")
-      .notNull()
-      .default(false),
-    // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE. Nullable
-    // and load-bearing: `null` is the ORACLE's behaviour (advertise the default type
-    // hints and accept whatever the model emits), which is what every Stack does.
-    ontology: jsonb("ontology").$type<JsonObject>(),
-    // The versioned per-Stack type catalog, added by the open-classification upgrade.
-    // NULL means "no catalog of its own": fall back to the legacy `ontology` column
-    // and the documented default catalog.
-    typeCatalog: jsonb("type_catalog").$type<JsonObject>(),
-    catalogVersion: text("catalog_version"),
-  },
-  (t) => [
-    unique("stacks_domain_key").on(t.domain),
-    check("valid_scope", sql`${t.scope} in ('stack', 'workspace', 'domain')`),
-    check(
-      "valid_strategy",
-      sql`${t.compilationStrategy} in ('incremental', 'global')`,
-    ),
-    check("valid_domain_slug", sql`${t.domain} ~ '^[a-z0-9-]+$'`),
-    check(
-      "valid_type_catalog_is_object",
-      sql`${t.typeCatalog} is null or jsonb_typeof(${t.typeCatalog}) = 'object'`,
-    ),
-    index("idx_stacks_domain").on(t.domain),
-  ],
-);
+export {
+  ontologyEntities,
+  ontologyRelationships,
+  stacks,
+} from "./schema-kg-ontology.js";
 
 // ---------------------------------------------------------------------------
 // GROUP 2: Documents

@@ -1,7 +1,8 @@
 /**
  * @file packages/llmwiki-kg/ts/src/schema-kg-ontology.ts
- * @description Drizzle mirror of `ontology_entities` and `ontology_relationships`, the two
- * tables that hold the knowledge graph, together with the ontology verdict columns they carry.
+ * @description Drizzle mirror of `stacks`, `ontology_entities` and `ontology_relationships` — the
+ * Stack anchor plus the two tables that hold the knowledge graph, together with the ontology
+ * verdict columns they carry.
  *
  * ## Why this is not in `schema.ts`
  *
@@ -9,26 +10,32 @@
  * predate a change, and the house rules cap a file at 400 lines. Adding the verdict, reason and
  * offending-type columns to both graph tables pushed `schema.ts` past that cap, so the two
  * tables moved here. It is a pure structural extraction — no column, constraint, index or
- * exported name changed — and `schema.ts` re-exports both tables, so every existing import
- * path still resolves.
+ * exported name changed — and `schema.ts` re-exports all three tables, so every existing import
+ * path still resolves. The one thing that did move afterwards is `stacks` itself, to close the
+ * module cycle that extraction opened; see the dependency section below.
  *
- * ## The dependency direction is a cycle here, and it is safe
+ * ## The value edge runs one way: `schema.ts` imports from here, never the reverse
  *
- * `schema-open-classification.ts` can keep its dependency one-way because `schema.ts` imports
- * only TYPES from it. That is not available here: `schema.ts` declares
- * `entity_source_documents` and `entity_pages`, both of which carry a foreign key to
- * `ontology_entities`, and it re-exports `ontologyEntities` for the callers that read the
- * mirror as a namespace. So this module imports `stacks` from `schema.ts` while `schema.ts`
- * imports `ontologyEntities` from this module.
+ * `schema-open-classification.ts` keeps its dependency one-way because `schema.ts` imports only
+ * TYPES from it. The same rule has to hold here, and it costs one table: `stacks` is the
+ * foreign-key target of both tables below (and of the Stack-keyed tables in `schema.ts`), so it
+ * is declared in this module and re-exported from `schema.ts`. Declaring it there instead put a
+ * value import on each side of the pair, and `fallow`'s `circular_dependencies` check — which is
+ * a CI gate — rejected that.
  *
- * What keeps the cycle safe is that nothing here READS a `schema.ts` binding while this module
- * evaluates: every use of `stacks` sits inside a thunk drizzle resolves lazily. `references()`
- * only records the callback (`pg-core/columns/common.js:14-17`), `pgTable` stores the
- * extra-config builder instead of calling it (`pg-core/table.js:45-46`), and `ForeignKeyBuilder`
- * keeps its reference as a function (`pg-core/foreign-keys.js:12-15`) — all drizzle-orm 0.45.4.
- * A future column definition that evaluated a `schema.ts` table at module scope would turn this
- * into a temporal-dead-zone error, which is why the direction is written down here rather than
- * left implicit.
+ * The only thing this module imports from `schema.ts` is the `JsonObject` and `OntologyVerdict`
+ * types, which `verbatimModuleSyntax` erases: a type-only import adds no runtime edge, so the
+ * cycle does not exist at evaluation time and cannot become a temporal-dead-zone error.
+ *
+ * What keeps the remaining lazy references safe is that nothing here READS a foreign table
+ * binding while this module evaluates: every cross-table use sits inside a thunk drizzle
+ * resolves lazily. `references()` only records the callback
+ * (`pg-core/columns/common.js:14-17`), `pgTable` stores the extra-config builder instead of
+ * calling it (`pg-core/table.js:45-46`), and `ForeignKeyBuilder` keeps its reference as a
+ * function (`pg-core/foreign-keys.js:12-15`) — all drizzle-orm 0.45.4. A future column
+ * definition that evaluated another table at module scope would turn this into a
+ * temporal-dead-zone error, which is why the direction is written down here rather than left
+ * implicit.
  */
 import { sql } from "drizzle-orm";
 import type { BuildExtraConfigColumns } from "drizzle-orm";
@@ -48,7 +55,71 @@ import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 
 import type { ClassificationState, CompatibilityState, SupportState } from "./schema-open-classification.js";
 import type { JsonObject, OntologyVerdict } from "./schema.js";
-import { stacks } from "./schema.js";
+
+// ---------------------------------------------------------------------------
+// GROUP 0: Stacks
+// ---------------------------------------------------------------------------
+
+/**
+ * Declared here, not in `schema.ts`, because it is the foreign-key target of both ontology
+ * tables below: the shared anchor has to live on the referenced side of the one-way edge or the
+ * pair becomes a value-level cycle. `schema.ts` re-exports it, so the mirror keeps one surface
+ * and `import * as schema from "./schema.js"` still resolves `schema.stacks`.
+ *
+ * The house rule that a declaration lives next to its readers is subordinate to that, and the
+ * honest follow-up — not taken here, because it is out of this task's scope — is a third module
+ * holding `stacks` alone, imported by both of these.
+ */
+export const stacks = pgTable(
+  "stacks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    domain: text("domain").notNull(),
+    description: text("description"),
+    scope: text("scope").notNull().default("stack"),
+    // Nullable in SQL: default 'incremental' with no NOT NULL.
+    compilationStrategy: text("compilation_strategy").default("incremental"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .notNull()
+      .defaultNow(),
+    // Inactivation, not deletion (decision 1.3): nine tables reference `stacks(id)` with
+    // `on delete cascade`, so an inactive Stack keeps its row and its unique `domain`
+    // instead of being deleted. Declared in `db/schema.sql`'s CREATE TABLE and added to a
+    // database that already exists by `db/migration_stack_active.sql`.
+    active: boolean("active").notNull().default(true),
+    // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE.
+    synthesizeDescriptions: boolean("synthesize_descriptions")
+      .notNull()
+      .default(false),
+    // Added by a later ALTER TABLE in db/schema.sql, not the CREATE TABLE. Nullable
+    // and load-bearing: `null` is the ORACLE's behaviour (advertise the default type
+    // hints and accept whatever the model emits), which is what every Stack does.
+    ontology: jsonb("ontology").$type<JsonObject>(),
+    // The versioned per-Stack type catalog, added by the open-classification upgrade.
+    // NULL means "no catalog of its own": fall back to the legacy `ontology` column
+    // and the documented default catalog.
+    typeCatalog: jsonb("type_catalog").$type<JsonObject>(),
+    catalogVersion: text("catalog_version"),
+  },
+  (t) => [
+    unique("stacks_domain_key").on(t.domain),
+    check("valid_scope", sql`${t.scope} in ('stack', 'workspace', 'domain')`),
+    check(
+      "valid_strategy",
+      sql`${t.compilationStrategy} in ('incremental', 'global')`,
+    ),
+    check("valid_domain_slug", sql`${t.domain} ~ '^[a-z0-9-]+$'`),
+    check(
+      "valid_type_catalog_is_object",
+      sql`${t.typeCatalog} is null or jsonb_typeof(${t.typeCatalog}) = 'object'`,
+    ),
+    index("idx_stacks_domain").on(t.domain),
+  ],
+);
 
 export const ontologyEntities = pgTable(
   "ontology_entities",
