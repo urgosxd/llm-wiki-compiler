@@ -278,11 +278,17 @@ function chunkCountOf(handle: unknown): number {
  * Both lists are sorted by their own serialised form, so the hash depends on the graph
  * and not on the order Postgres happened to return rows in.
  *
+ * The function is EXPORTED because it is the instrument, not a detail of one measurement:
+ * `test/dimensions/kg-graph-hash-includes-class.test.ts` pins that both queries read every
+ * row of the Stack regardless of its ontology class. A `where ontology_verdict = 'accepted'`
+ * added to either query would silently narrow what the baseline covers, and only a test
+ * calling this function can see that.
+ *
  * @param db - Handle bound to the Stack's database.
  * @param stackId - The Stack to hash; another Stack's rows are never included.
  * @returns 64 lowercase hex characters.
  */
-async function graphHashFor(db: DatabaseHandle, stackId: string): Promise<string> {
+export async function graphHashFor(db: DatabaseHandle, stackId: string): Promise<string> {
   const entities = await db.execute<{ name: string; type: string }>(
     `select name, type from ontology_entities where stack_id = '${stackId}'`,
   );
