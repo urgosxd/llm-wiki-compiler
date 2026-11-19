@@ -33,6 +33,7 @@ Restores answer-citation resolution on row-backed Stacks: `collectAnswerCitation
 - [x] T5 — forward the SDK's captured environment into answer generation, and pin it with `test/sdk/query-citation-env.test.ts` (the SDK door of S4, and S5 through it). Commit 4 (`fix(sdk): forward the caller's environment into answer generation`).
 - [x] T6 — pin the alias carrier `createRawPageSource` gained in T2 with one case on `RawPageSource`, present and absent. S8. Commit 5 (`test(pages): pin aliases on the row-backed raw page source`).
 - [ ] T7 — independent re-verification of T5 and T6 by a verifier that did not write them. S9, S10.
+- [x] T8 — gate integrity: re-freeze the pair oracle for the SDK citation suite so the gate of record passes. S9. Commit 6 (`test(module-graph): re-freeze the pair oracle for the SDK citation suite`).
 
 ## Log
 
@@ -404,4 +405,78 @@ runs was one the run created (`amazing_haibt`, `practical_babbage`, `ecstatic_ga
 **S10 stands.** This proves ONE handle bound to Stack B resolves B's page and reports the
 ambient Stack's page `broken`. It does not show the human's production citations resolving,
 and no such claim is made.
+
+### L5 — T8 evidence: the pair oracle re-frozen to 24, and the gate of record green (covers S9)
+
+**The failure, reproduced before any change.** The gate of record
+(`PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" corepack pnpm exec turbo run test --filter=//`)
+reported `1 failed | 6937 passed | 12 skipped (6950)` in `953 passed | 5 skipped` files. The
+focused reproduction, `pnpm exec vitest run test/module-graph-crawl.test.ts`, printed exactly:
+
+```
+ FAIL  test/module-graph-crawl.test.ts > reproduces vitest related for the wiki source pair
+AssertionError: expected [ …(24) ] to deeply equal [ …(23) ]
+@@ -15,10 +15,11 @@
+    "test/sdk/ingest-request-env.test.ts",
++   "test/sdk/query-citation-env.test.ts",
+    "test/sdk/source-api.test.ts",
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+```
+
+**Diagnosis, measured not assumed.** T5 added `test/sdk/query-citation-env.test.ts`, which
+drives `createWiki({ root, env }).query()` through the SDK facade and so reaches BOTH oracle
+inputs (`packages/wiki/src/index.ts` and `sdk/compiler-composition.ts`). The frozen oracle
+was not re-frozen with it. The file's own header states that the pair oracle is re-frozen
+whenever a new SDK-reaching suite arrives, so this is the documented procedure, not a
+loosening.
+
+**The ordering rule, read from the code.** `relatedTests` (`scripts/module-graph.ts`) returns
+`related.sort()` — default lexicographic sort of repo-relative POSIX paths — and the oracle
+is compared to it with `toEqual`, so the list must stay sorted. Verified programmatically on
+the edited file: 24 entries, `[...list].sort()` identical to `list`, and the new entry at
+index 18 between `test/sdk/ingest-request-env.test.ts` and `test/sdk/source-api.test.ts` —
+the same slot the received diff reported.
+
+**The change, and nothing else.** `test/module-graph-crawl.test.ts` only:
+
+1. `"test/sdk/query-citation-env.test.ts"` inserted in sorted position inside `PAIR_TESTS`;
+2. the header note re-frozen to 24, naming the suite, its `query()` door, and that the entry
+   is an addition to the frozen oracle rather than a loosening of it; the 23-by-
+   `test/stack-authority-masquerade.test.ts` record kept as history;
+3. the three stale count references to this same frozen oracle that would otherwise
+   contradict it (the file header's `23 for that file`, the `PAIR_TESTS` doc comment's
+   `exactly-23`, and the depth-contrast paragraph's `selects 23 files`) renumbered to 24.
+
+No assertion changed. `expect(PAIR_TESTS.length).toBeGreaterThan(SINGLE_TESTS.length)` is
+relative and untouched. No production code touched. The single-source oracle stays at 6,
+which is consistent with the suite not appearing in the single selection.
+
+**Gates, this run.**
+
+- `pnpm exec vitest run test/module-graph-crawl.test.ts` → `Test Files 1 passed (1)`,
+  `Tests 6 passed (6)`, nothing skipped.
+- the gate of record, full tier → `Tasks: 1 successful, 1 total`,
+  `Test Files 953 passed | 5 skipped (958)`, `Tests 6938 passed | 12 skipped (6950)`,
+  `Duration 417.83s`. Population unchanged (958 files / 6950 tests); the previously failing
+  file now passes at 6/6. Zero failed files.
+- The 5 skipped files are all environment-gated and outside this branch's reach:
+  `test/fixtures/hatch-worker-env-probe.test.ts` (`it.skipIf` unless a spawning test installed
+  an expectation), `packages/llmwiki-kg/ts/src/routes/{aks,ingest,pages}-gateway.test.ts`
+  (`describe.skipIf(… || process.env["AKS_TEST_GATEWAY"] !== "1")`), and
+  `packages/llmwiki-kg/ts/src/core/jev/vendor-contract.test.ts` (`TYPESAFE_API_KEY` absent —
+  no keys in this campaign).
+- `pnpm exec tsc --noEmit` → no output, exit 0.
+- `pnpm run typecheck:tests` → `1757 files checked; 237 baseline diagnostics in 85 files; no
+  regression`.
+- `pnpm run lint` → `1839 files scanned; 556 baseline violations in 394 files across 421
+  rule/file entries; no regression`.
+
+Every database server in these runs was one the run created; the schema-stale leftover
+`crazy_heyrovsky` on `:5434` was refused by the harness and neither adopted nor deleted.
+The verifier's scratch root `/tmp/gpQuHs2G/tmp.lB3e6fSBuq` (1.7 GB, `base/` and `revert/`
+copies) was removed.
+
+**S10 stands.** This commit restores the gate of record; it proves nothing new about the
+human's production citations.
 
