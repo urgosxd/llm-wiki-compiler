@@ -112,21 +112,30 @@ async function clearContents(realOut: string): Promise<void> {
 }
 
 /** OKF log translated from llmwiki's activity log.md when present, else a synthetic export entry. */
-async function buildLog(root: string, pageCount: number): Promise<string> {
+async function buildLog(root: string, pageCount: number, env: NodeJS.ProcessEnv): Promise<string> {
   const fallback = [{ date: new Date().toISOString().slice(0, 10), action: "Export", text: `${pageCount} doc(s)` }];
-  const parsed = parseLlmwikiLog(await readJournalMarkdown(root));
+  const parsed = parseLlmwikiLog(await readJournalMarkdown(root, env));
   return buildOkfLog(parsed.length ? parsed : fallback);
 }
 
 /**
- * Read the activity journal as markdown, from rows when a Stack is configured.
+ * Read the activity journal as markdown, from rows when the environment names a Stack.
  *
  * The export downstream PARSES headings, so a Stack's journal is rendered back into
  * the same markdown the file backend writes rather than being read as data. That
  * keeps one parser and one format instead of teaching the OKF bundle about rows.
+ *
+ * `env` is a PARAMETER and never `process.env`: the header this returns is bundle
+ * content like any page, so a handle naming Stack B must not take it from the Stack the
+ * process happens to serve. Reading the ambient environment here shipped one tenant's
+ * journal heading inside another tenant's otherwise-correct bundle.
+ *
+ * @param root - llmwiki project root, holding `log.md` when no Stack is configured.
+ * @param env - Environment naming the Stack whose journal this bundle carries.
+ * @returns The journal as `log.md` markdown, empty when the project has none.
  */
-async function readJournalMarkdown(root: string): Promise<string> {
-  const viaRows = await withJournalSource(process.env, async (source) =>
+async function readJournalMarkdown(root: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const viaRows = await withJournalSource(env, async (source) =>
     source === undefined ? null : renderJournal(await source.read()),
   );
   if (viaRows !== null) return viaRows;
@@ -168,6 +177,11 @@ function reportSkippedReferences(
  * @param onWarn - Collector for non-fatal warnings (e.g. cited sources not bundled).
  *   Defaults to printing via `output.status` so direct callers are unchanged; the
  *   output-free core (`runOkfExport`) passes a collector so nothing reaches stdout.
+ * @param env - Environment naming the Stack whose journal the bundle's `log.md`
+ *   carries. Optional and appended last, so every existing caller keeps working
+ *   unchanged; omitting it means the ambient Stack, exactly as before. A Stack-scoped
+ *   caller passes the one its argument named, because the journal header is bundle
+ *   content like any page and must come from the Stack the caller asked for.
  * @returns Absolute paths of every file written (index, docs, references, log).
  */
 export async function buildOkfBundle(
@@ -175,6 +189,7 @@ export async function buildOkfBundle(
   pages: ExportPage[],
   out: string,
   onWarn: (msg: string) => void = (m) => output.status("!", output.warn(m)),
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string[]> {
   await assertSafeBundleTarget(out, root);           // BEFORE any write — refuse fs-root, project-root, inside-.git on the resolved target (external out is allowed)
   await mkdir(out, { recursive: true });
@@ -205,7 +220,7 @@ export async function buildOkfBundle(
     written.push(await writeConfined(realOut, doc.rel, doc.content));
   }
   written.push(...(await copyResolvedReferences(refs, realOut)));
-  written.push(await writeConfined(realOut, "log.md", await buildLog(root, pages.length)));
+  written.push(await writeConfined(realOut, "log.md", await buildLog(root, pages.length, env)));
   reportSkippedReferences(pages, refs, onWarn);
   for (const w of pathWarnings) onWarn(w);
   return written;

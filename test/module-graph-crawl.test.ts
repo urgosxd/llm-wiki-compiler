@@ -8,13 +8,21 @@
  * keeps it honest is parity against the real one. That parity is frozen here as two
  * literal arrays produced by `vitest related` at commit
  * a12fd91f1fe850e77b46a0698cec29ae22e188fa: 6 files for
- * `packages/wiki/src/index.ts`, and 28 for that file plus
+ * `packages/wiki/src/index.ts`, and 30 for that file plus
  * `packages/wiki/src/sdk/compiler-composition.ts`.
  *
- * THE PAIR ORACLE WAS LAST RE-FROZEN AT 28 BY `test/sdk/export-json-env.test.ts`.
+ * THE PAIR ORACLE WAS LAST RE-FROZEN AT 30 BY `test/sdk/okf-export-journal-env.test.ts`
+ * AND `test/sdk/two-stack-env-guard.test.ts`. The first drives
+ * `createWiki({ root, env }).exportOkf()` and reads the written bundle back, the second
+ * drives the shared two-Stack opening those suites are built on, so both reach the pair
+ * inputs the way the entries below are reached; the LIVE `vitest related` on this tree
+ * returns these 30 files, the single-input selection still returns the same 6, and no
+ * other entry moved.
+ *
+ * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 28 BY `test/sdk/export-json-env.test.ts`.
  * That suite drives `createWiki({ root, env }).exportJson()` through the SDK facade, so
  * it reaches both oracle inputs the way the entries below are reached; the LIVE
- * `vitest related` on this tree returns these 28 files and no other entry moved.
+ * `vitest related` on this tree returned those 28 files and no other entry moved.
  *
  * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 27 BY `test/sdk/okf-export-env.test.ts` AND
  * `test/sdk/okf-import-env.test.ts`. Both drive `createWiki({ root, env }).exportOkf()`
@@ -56,7 +64,7 @@
  *
  * THE DEPTH CONTRAST IS LOAD-BEARING. `transformRequest` records only a module's
  * own imports, so a single pass yields depth-1 closures and stops. The pair of
- * inputs selects 28 files while the single input selects 6 — those are the two
+ * inputs selects 30 files while the single input selects 6 — those are the two
  * frozen oracles below, i.e. the selections the real `vitest related` returned for
  * those inputs, not counts this file derives from the crawl it is testing. A
  * regression back to one pass cannot reach the second number, which is what the
@@ -100,7 +108,7 @@ const SINGLE_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
 ];
 
-/** Oracle input two, and the exactly-28 selection `vitest related` returned for it. */
+/** Oracle input two, and the exactly-30 selection `vitest related` returned for it. */
 const PAIR_SOURCES: readonly string[] = [
   "packages/wiki/src/index.ts",
   "packages/wiki/src/sdk/compiler-composition.ts",
@@ -127,10 +135,12 @@ const PAIR_TESTS: readonly string[] = [
   "test/sdk/ingest-journal.test.ts",
   "test/sdk/ingest-request-env.test.ts",
   "test/sdk/okf-export-env.test.ts",
+  "test/sdk/okf-export-journal-env.test.ts",
   "test/sdk/okf-import-env.test.ts",
   "test/sdk/query-citation-env.test.ts",
   "test/sdk/source-api.test.ts",
   "test/sdk/surface.test.ts",
+  "test/sdk/two-stack-env-guard.test.ts",
   "test/stack-authority-masquerade.test.ts",
   "test/status/sources-count-matches-selection.test.ts",
   "test/system-policy-invalidation.test.ts",

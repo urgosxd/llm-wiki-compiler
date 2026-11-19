@@ -24,6 +24,6 @@ export async function runOkfExport(root: string, opts: OkfExportOptions = {}): P
   // (matching the other string surfaces). An ok journal adds nothing — parity-safe.
   const journal = await journalHealthWarning(root);
   if (journal) warnings.push(`${journal.code}: ${journal.message}`);
-  const writtenPaths = await buildOkfBundle(root, pages, outDir, (m) => warnings.push(m));
+  const writtenPaths = await buildOkfBundle(root, pages, outDir, (m) => warnings.push(m), env);
   return { outDir, writtenPaths, warnings };
 }

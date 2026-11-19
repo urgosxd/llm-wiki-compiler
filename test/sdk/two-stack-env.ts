@@ -31,6 +31,8 @@ import type { Wiki } from "../../packages/wiki/src/sdk/types.js";
 import { createProbeStack } from "../dimensions/harness-lifecycle.js";
 import type { ProbeStack } from "../dimensions/harness-lifecycle.js";
 import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
+import { createDimensionsDatabase } from "../../packages/wiki/src/dimensions/activation.js";
+import { appendJournalEntry } from "../../packages/wiki/src/dimensions/wiki/activity-log-store.js";
 
 /** The slug that exists ONLY in the Stack the process serves. */
 const AMBIENT_SLUG = "alpha-a";
@@ -78,6 +80,38 @@ export async function createTwoStacks(label: string): Promise<TwoStacks> {
       await bound.harness.cleanup();
     },
   };
+}
+
+/**
+ * Append one journal entry to the Stack `stack` owns.
+ *
+ * Written through the store the OKF export READS -- `appendJournalEntry`, the same seam
+ * `test/fixtures/mcp-stack-rows.ts` inspects through -- so a seeded entry cannot differ
+ * in shape from one the product wrote. The handle is opened from `stack.env()` rather
+ * than from the ambient environment deliberately: an environment carrying no
+ * `AKS_DATABASE_URL` falls back to the vendored PRODUCTION port, which is the trap
+ * `test/fixtures/test-database.ts` exists to close.
+ *
+ * @param stack - The Stack whose journal gains the entry.
+ * @param description - Heading detail, which is the text an OKF `log.md` carries.
+ * @param at - When the operation happened; distinct dates keep a failure readable.
+ */
+export async function appendStackJournalEntry(
+  stack: ProbeStack,
+  description: string,
+  at: Date,
+): Promise<void> {
+  const handle = createDimensionsDatabase(stack.env());
+  try {
+    await appendJournalEntry(handle.db, stack.harness.stackId, {
+      operation: "ingest",
+      description,
+      details: [],
+      at,
+    });
+  } finally {
+    await handle.close();
+  }
 }
 
 /**
