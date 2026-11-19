@@ -394,6 +394,16 @@ alter table ontology_entities add column if not exists classifier_version text;
 alter table ontology_entities add column if not exists classification_updated_at timestamptz;
 alter table ontology_entities add column if not exists identity_key text;
 
+-- Ontology verdict, deliberately NOT `classification_state` above: that column is the
+-- catalog-match vocabulary (`classified | free_no_match | ...`) and `persist-classification.ts`
+-- UPDATEs it after insert, so a verdict written there would be overwritten rather than kept.
+-- `accepted` is the default because every row that exists before this change WAS accepted by
+-- the ontology; `offending_type` keeps the type the classifier refused, so the reason survives
+-- onto the row instead of being reduced to a boolean. Full meanings: `migration_kg_ontology_verdict.sql`.
+alter table ontology_entities add column if not exists ontology_verdict text not null default 'accepted';
+alter table ontology_entities add column if not exists ontology_rejection_reason text;
+alter table ontology_entities add column if not exists ontology_offending_type text;
+
 -- Relationship classification, provenance and identity.
 alter table ontology_relationships add column if not exists predicate text;
 alter table ontology_relationships add column if not exists canonical_type text;
@@ -409,6 +419,11 @@ alter table ontology_relationships add column if not exists catalog_version text
 alter table ontology_relationships add column if not exists classifier_version text;
 alter table ontology_relationships add column if not exists classification_updated_at timestamptz;
 alter table ontology_relationships add column if not exists identity_key text;
+
+-- Same verdict axis as the entity block above, on the edge's own row.
+alter table ontology_relationships add column if not exists ontology_verdict text not null default 'accepted';
+alter table ontology_relationships add column if not exists ontology_rejection_reason text;
+alter table ontology_relationships add column if not exists ontology_offending_type text;
 
 -- Backfill: state what is already true, invent nothing. Existing rows were accepted
 -- with a type label and no evidence judgement was ever made about them, so they are
@@ -456,6 +471,23 @@ alter table ontology_entities drop constraint if exists canonical_type_requires_
 alter table ontology_entities add constraint canonical_type_requires_classified
     check (canonical_type is null or classification_state = 'classified');
 
+-- The ontology verdict is a closed two-class vocabulary, and its reason is one of the four
+-- the classifier can return. The third check is the one that keeps the pair honest: a
+-- rejected row ALWAYS carries its reason and an accepted row NEVER does, so "rejected with
+-- no reason" is unrepresentable rather than merely discouraged. Existing rows are
+-- `accepted` with a NULL reason, which is exactly the state it admits.
+alter table ontology_entities drop constraint if exists valid_entity_ontology_verdict;
+alter table ontology_entities add constraint valid_entity_ontology_verdict
+    check (ontology_verdict in ('accepted', 'rejected'));
+alter table ontology_entities drop constraint if exists valid_entity_ontology_rejection_reason;
+alter table ontology_entities add constraint valid_entity_ontology_rejection_reason
+    check (ontology_rejection_reason is null or ontology_rejection_reason in
+        ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN',
+         'OBJECT_TYPE_NOT_IN_RANGE'));
+alter table ontology_entities drop constraint if exists ontology_rejection_reason_requires_rejected;
+alter table ontology_entities add constraint ontology_rejection_reason_requires_rejected
+    check ((ontology_verdict = 'rejected') = (ontology_rejection_reason is not null));
+
 alter table ontology_relationships drop constraint if exists valid_relationship_classification_state;
 alter table ontology_relationships add constraint valid_relationship_classification_state
     check (classification_state is null or classification_state in
@@ -470,6 +502,20 @@ alter table ontology_relationships drop constraint if exists canonical_type_requ
 alter table ontology_relationships add constraint canonical_type_requires_classified
     check (canonical_type is null or classification_state = 'classified');
 
+-- The same three checks on the edge's row; see the entity block above for why the pair
+-- is enforced as an equivalence rather than as two independent conditions.
+alter table ontology_relationships drop constraint if exists valid_relationship_ontology_verdict;
+alter table ontology_relationships add constraint valid_relationship_ontology_verdict
+    check (ontology_verdict in ('accepted', 'rejected'));
+alter table ontology_relationships drop constraint if exists valid_relationship_ontology_rejection_reason;
+alter table ontology_relationships add constraint valid_relationship_ontology_rejection_reason
+    check (ontology_rejection_reason is null or ontology_rejection_reason in
+        ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN',
+         'OBJECT_TYPE_NOT_IN_RANGE'));
+alter table ontology_relationships drop constraint if exists ontology_rejection_reason_requires_rejected;
+alter table ontology_relationships add constraint ontology_rejection_reason_requires_rejected
+    check ((ontology_verdict = 'rejected') = (ontology_rejection_reason is not null));
+
 -- Identity instead of spelling: `unique (stack_id, name)` merged homonyms, so the
 -- identity key replaces it. The plain `(stack_id, name)` index keeps the `lower(name)`
 -- lookups the read paths perform fast.
@@ -478,6 +524,14 @@ alter table ontology_entities drop constraint if exists unique_identity_per_stac
 alter table ontology_entities add constraint unique_identity_per_stack
     unique (stack_id, identity_key);
 create index if not exists idx_entities_stack_name on ontology_entities (stack_id, name);
+
+-- The verdict is read as a filter, never as prose: every graph read that can narrow by class
+-- asks `where stack_id = ? and ontology_verdict = ?`, so the pair is the index. Without it the
+-- filter would be correct and still scan the whole Stack's rows.
+create index if not exists idx_entities_ontology_verdict
+    on ontology_entities (stack_id, ontology_verdict);
+create index if not exists idx_rels_ontology_verdict
+    on ontology_relationships (stack_id, ontology_verdict);
 
 -- `unique_edge_per_stack` is KEPT beside the identity-key constraint: two consolidators
 -- infer their upsert target from `on conflict (stack_id, from_entity_id, to_entity_id, type)`,

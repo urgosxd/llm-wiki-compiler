@@ -38,7 +38,9 @@ import {
   databaseShape,
   drizzleColumnNames,
   freshDatabaseUrl,
+  newStack,
   openMigratedLegacyDatabase,
+  twoEntities,
 } from "./schema-open-classification-harness.js";
 import type { LegacyDatabase } from "./schema-open-classification-harness.js";
 import { withClient } from "./testing/per-run-database.js";
@@ -237,5 +239,79 @@ describe("the backfill", () => {
     expect(new Set(keys.map((row) => row.identity_key)).size).toBe(2);
     expect(keys[0]?.identity_key).toBe("gateway");
     expect(keys[1]?.identity_key).toMatch(/^gateway#[0-9a-f-]{36}$/);
+  });
+});
+/** The three columns an ontology verdict needs, on entities and on relationships. */
+const VERDICT_COLUMNS = [
+  "ontology_offending_type",
+  "ontology_rejection_reason",
+  "ontology_verdict",
+];
+
+/**
+ * The definition of the index a verdict-filtered read is meant to resolve through.
+ *
+ * Asserted by DEFINITION, not by query plan, and that is deliberate: with
+ * `enable_seqscan = off` on a table this small the planner picked
+ * `unique_identity_per_stack` (it also leads with `stack_id`) and evaluated the verdict as a
+ * `Filter`, so a plan assertion here would pin the planner's coin flip rather than the
+ * schema. What the slice owns is that a read filtered by Stack and class HAS an index whose
+ * columns are that pair, in that order; whether a three-row table is read by scan is not a
+ * property of this migration.
+ */
+async function verdictIndexDefinition(client: Sql, index: string): Promise<string> {
+  const rows = await client<{ indexdef: string }[]>`
+    select indexdef from pg_indexes where schemaname = 'public' and indexname = ${index}`;
+  return rows[0]?.indexdef ?? "";
+}
+
+/**
+ * Every observable fact S2 owns, on ONE schema path.
+ *
+ * Module scope, not test scope: the repository caps a function at 39 code lines and this is
+ * the same set of facts run twice — once on the upgraded database, once on a clean install —
+ * not two different assertions.
+ */
+async function verdictShapeOn(url: string): Promise<void> {
+  await withClient(url, async (client) => {
+    for (const table of ["ontology_entities", "ontology_relationships"] as const) {
+      expect({ table, columns: await columnNames(client, table) }).toEqual({
+        table,
+        columns: expect.arrayContaining(VERDICT_COLUMNS),
+      });
+      const index = table === "ontology_entities" ? "idx_entities_ontology_verdict" : "idx_rels_ontology_verdict";
+      expect(await verdictIndexDefinition(client, index)).toContain(
+        "(stack_id, ontology_verdict)",
+      );
+    }
+    const stackId = await newStack(client, "ontology-verdict");
+    const [from, to] = await twoEntities(client, stackId, ["Subject X", "Object Y"]);
+    await client`
+      insert into ontology_entities
+        (stack_id, name, type, ontology_verdict, ontology_rejection_reason, ontology_offending_type)
+      values (${stackId}, 'Verb Widget', 'NONSENSE', 'rejected', 'UNKNOWN_ENTITY_TYPE', 'NONSENSE')`;
+    await client`
+      insert into ontology_relationships
+        (stack_id, from_entity_id, to_entity_id, type, ontology_verdict,
+         ontology_rejection_reason, ontology_offending_type)
+      values (${stackId}, ${from}, ${to}, 'frobnicates', 'rejected',
+              'UNKNOWN_RELATIONSHIP_TYPE', 'frobnicates')`;
+    const [entities] = await client<{ n: number }[]>`
+      select count(*)::int as n from ontology_entities
+      where stack_id = ${stackId} and ontology_verdict = 'rejected'`;
+    const [relationships] = await client<{ n: number }[]>`
+      select count(*)::int as n from ontology_relationships
+      where stack_id = ${stackId} and ontology_verdict = 'rejected'`;
+    expect([entities?.n, relationships?.n]).toEqual([1, 1]);
+    const [accepted] = await client<{ n: number }[]>`
+      select count(*)::int as n from ontology_entities
+      where ontology_verdict = 'accepted' and ontology_rejection_reason is null`;
+    expect(accepted?.n).toBeGreaterThanOrEqual(2);
+  });
+}
+
+describe("the ontology verdict columns", () => {
+  it("filters and counts a rejected verdict on both schema paths", async () => {
+    for (const url of [legacy.url, freshDatabaseUrl()]) await verdictShapeOn(url);
   });
 });

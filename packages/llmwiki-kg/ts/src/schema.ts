@@ -207,6 +207,15 @@ export const documentChunks = pgTable(
   ],
 );
 
+/**
+ * The two ontology classes a row can carry.
+ *
+ * Deliberately separate from `ClassificationState`: that vocabulary answers "did a catalog
+ * match this label" and is rewritten by the classifier, while this one answers "did the
+ * ontology accept this claim" and must survive every later classification pass.
+ */
+export type OntologyVerdict = "accepted" | "rejected";
+
 export const ontologyEntities = pgTable(
   "ontology_entities",
   {
@@ -268,6 +277,16 @@ export const ontologyEntities = pgTable(
     // NOT NULL in SQL. Writers that do not supply one get it derived from `name` by
     // the `fill_identity_key` trigger, exactly as the backfill derived it.
     identityKey: text("identity_key").notNull(),
+    // The ontology verdict, on its own axis. It is NOT `classificationState` above: that
+    // column is the catalog-match vocabulary and `persist-classification.ts` UPDATEs it, so
+    // a verdict kept there would be erased. `accepted` is the default because every row
+    // that predates the column WAS accepted — a rejected triplet was never written.
+    ontologyVerdict: text("ontology_verdict")
+      .$type<OntologyVerdict>()
+      .notNull()
+      .default("accepted"),
+    ontologyRejectionReason: text("ontology_rejection_reason"),
+    ontologyOffendingType: text("ontology_offending_type"),
   },
   (t) => [
     unique("unique_identity_per_stack").on(t.stackId, t.identityKey),
@@ -283,9 +302,23 @@ export const ontologyEntities = pgTable(
       "canonical_type_requires_classified",
       sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
     ),
+    check(
+      "valid_entity_ontology_verdict",
+      sql`${t.ontologyVerdict} in ('accepted', 'rejected')`,
+    ),
+    check(
+      "valid_entity_ontology_rejection_reason",
+      sql`${t.ontologyRejectionReason} is null or ${t.ontologyRejectionReason} in ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN', 'OBJECT_TYPE_NOT_IN_RANGE')`,
+    ),
+    // An equivalence, not two conditions: rejected implies a reason, accepted implies none.
+    check(
+      "ontology_rejection_reason_requires_rejected",
+      sql`(${t.ontologyVerdict} = 'rejected') = (${t.ontologyRejectionReason} is not null)`,
+    ),
     index("idx_entities_stack").on(t.stackId),
     index("idx_entities_type").on(t.type),
     index("idx_entities_stack_name").on(t.stackId, t.name),
+    index("idx_entities_ontology_verdict").on(t.stackId, t.ontologyVerdict),
   ],
 );
 
@@ -340,6 +373,13 @@ export const ontologyRelationships = pgTable(
       mode: "string",
     }),
     identityKey: text("identity_key").notNull(),
+    // The same verdict axis as `ontologyEntities` above, on the edge's own row.
+    ontologyVerdict: text("ontology_verdict")
+      .$type<OntologyVerdict>()
+      .notNull()
+      .default("accepted"),
+    ontologyRejectionReason: text("ontology_rejection_reason"),
+    ontologyOffendingType: text("ontology_offending_type"),
   },
   (t) => [
     // KEPT as well as the identity-key constraint: two consolidators infer their upsert
@@ -373,9 +413,22 @@ export const ontologyRelationships = pgTable(
       "canonical_type_requires_classified",
       sql`${t.canonicalType} is null or ${t.classificationState} = 'classified'`,
     ),
+    check(
+      "valid_relationship_ontology_verdict",
+      sql`${t.ontologyVerdict} in ('accepted', 'rejected')`,
+    ),
+    check(
+      "valid_relationship_ontology_rejection_reason",
+      sql`${t.ontologyRejectionReason} is null or ${t.ontologyRejectionReason} in ('UNKNOWN_ENTITY_TYPE', 'UNKNOWN_RELATIONSHIP_TYPE', 'SUBJECT_TYPE_NOT_IN_DOMAIN', 'OBJECT_TYPE_NOT_IN_RANGE')`,
+    ),
+    check(
+      "ontology_rejection_reason_requires_rejected",
+      sql`(${t.ontologyVerdict} = 'rejected') = (${t.ontologyRejectionReason} is not null)`,
+    ),
     index("idx_rels_stack").on(t.stackId),
     index("idx_rels_from").on(t.fromEntityId),
     index("idx_rels_to").on(t.toEntityId),
+    index("idx_rels_ontology_verdict").on(t.stackId, t.ontologyVerdict),
   ],
 );
 

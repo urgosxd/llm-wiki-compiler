@@ -79,6 +79,21 @@ const STACK_ACTIVE_MIGRATION_SQL = await readFile(
   new URL("../../db/migration_stack_active.sql", import.meta.url),
   "utf-8",
 );
+
+/**
+ * The ontology-verdict migration, read the same way and registered on the MIGRATED side.
+ *
+ * It is deliberately NOT in `scripts/apply-schemas.sh`: like
+ * `migration_open_kg_classification.sql` it is mirrored into `schema.sql` instead, so the
+ * fresh install path reaches its columns through the mirror and never runs this file. The
+ * migrated side is the only path that needs it applied, and it has to be applied THERE —
+ * between the snapshot and the comparison — or the parity assertion below would compare a
+ * migrated database without the verdict columns against a fresh one that has them.
+ */
+const ONTOLOGY_VERDICT_MIGRATION_SQL = await readFile(
+  new URL("../../db/migration_kg_ontology_verdict.sql", import.meta.url),
+  "utf-8",
+);
 /** The tables this migration touches: the shape both paths must agree on. */
 export const TOUCHED_TABLES = [
   "stacks",
@@ -276,6 +291,7 @@ export async function openMigratedLegacyDatabase(): Promise<LegacyDatabase> {
       entityColumnsBefore = await columnNames(client, "ontology_entities");
       await client.unsafe(MIGRATION_SQL);
       await client.unsafe(STACK_ACTIVE_MIGRATION_SQL);
+      await client.unsafe(ONTOLOGY_VERDICT_MIGRATION_SQL);
     });
   } catch (error) {
     await dropDatabase(name).catch(() => undefined);
