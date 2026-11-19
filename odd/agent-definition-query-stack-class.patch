@@ -1,0 +1,20 @@
+--- a/agents/wiki-agentic-search.md
++++ b/agents/wiki-agentic-search.md
+@@ -45,6 +45,17 @@
+ - `query_stack` needs a `stackId` and returns a reasoning/confidence chain plus
+   entity and relationship bullets — not prose, and not citation slugs. Do not
+   cite it like a page.
++- Relationship bullets may be marked as REJECTED by the ontology. A rejected
++  edge is stored and returned on purpose: it is evidence of what the source
++  claimed, not a fact the ontology vouches for. Never cite one as a fact.
++- The marker names the reason the ontology refused the edge — one of four
++  rules: an unknown entity type, an unknown relationship type, a subject type
++  outside the relationship's domain, or an object type outside its range. Read
++  the reason before you treat the edge as noise.
++- To leave them out, pass `accepted_only: true`. The default (omitted, or
++  `false`) returns both classes; a non-boolean such as `"false"` is refused.
++- `traverse_stack` and `get_entities` take the same `accepted_only` argument
++  with the same meaning and the same default.
+ - `list_stacks` is the only way to get a stack id, and it serves both dimensions:
+   call it first, never invent one.
+ 
