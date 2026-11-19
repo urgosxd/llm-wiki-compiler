@@ -23,7 +23,6 @@
     "packages/llmwiki-kg/ts/src/core/consolidation-entities.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/core/consolidation-relationships.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/core/default-ontology.test.ts max-lines-per-function": 1,
-    "packages/llmwiki-kg/ts/src/core/document-consolidation.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/core/eval/load.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/core/eval/main.test.ts max-lines-per-function": 1,
     "packages/llmwiki-kg/ts/src/core/eval/scorer.test.ts max-lines-per-function": 1,

@@ -125,6 +125,65 @@ async function findExistingEntity(
 }
 
 /**
+ * The corroboration update, with the two class rules and the three derived columns bound.
+ *
+ * A statement builder rather than an inline template so the rule and the statement it
+ * governs read as one unit without pushing {@link updateEntity} past the house
+ * function-size limit — the same split {@link relationshipUpsertSql} makes on the edge side.
+ *
+ * `staysAdmitted` comes from the STORED `ontology_verdict` and the incoming one, and all
+ * three class columns are derived from those same two values in this one statement, so the
+ * triple they write can never disagree — the CHECK is not relied on to catch a half-update.
+ *
+ * `returning id, ontology_verdict` is what makes the stored class OBSERVABLE to the caller:
+ * the class rule above is decided in SQL, so the caller cannot compute it from its input.
+ *
+ * @param entity - The folded entity whose mention is being corroborated.
+ * @param existing - The row already stored for it, for the id and the frozen type label.
+ * @param nextConfidence - The bumped confidence, capped at 1.
+ * @param nextDescription - The description to write, already resolved against the stored one.
+ * @returns The statement, already bound.
+ */
+function entityUpdateSql(
+  entity: ConsolidationEntity,
+  existing: EntityLookupRow,
+  nextConfidence: number,
+  nextDescription: string,
+) {
+  // Absent means accepted: the column's own default, and the state every row written by a
+  // caller that never enforced a declaration is in.
+  const incomingVerdict = entity.ontologyVerdict ?? "accepted";
+  // The row is admitted once EITHER side admits it. Never the other way round.
+  const staysAdmitted = sql`(ontology_entities.ontology_verdict = 'accepted' or ${incomingVerdict} = 'accepted')`;
+  return sql`
+    update ontology_entities
+    set confidence = ${nextConfidence},
+        description = ${nextDescription},
+        last_seen_at = now(),
+        updated_at = now(),
+        type = case
+          when ontology_entities.ontology_verdict = 'rejected' and ${incomingVerdict} = 'accepted'
+          then ${entity.type}
+          else ontology_entities.type
+        end,
+        ontology_verdict = case
+          when ${staysAdmitted} then 'accepted'
+          else 'rejected'
+        end,
+        ontology_rejection_reason = case
+          when ${staysAdmitted} then null
+          else ontology_entities.ontology_rejection_reason
+        end,
+        ontology_offending_type = case
+          when ${staysAdmitted} then null
+          else ontology_entities.ontology_offending_type
+        end
+    where id = ${existing.id}
+    returning id, ontology_verdict
+  `;
+}
+
+/**
  * Rewrites an existing entity's confidence, description, freshness — and, accepted-wins,
  * its ontology class.
  *
@@ -156,7 +215,7 @@ async function updateEntity(
   tx: DatabaseHandle,
   entity: ConsolidationEntity,
   existing: EntityLookupRow,
-): Promise<string> {
+): Promise<WrittenRow> {
   const existingConfidence = Number(existing.confidence);
   const existingDescription = existing.description ?? "";
   const nextConfidence = Math.min(1.0, existingConfidence + ENTITY_CONFIDENCE_BUMP);
@@ -169,38 +228,12 @@ async function updateEntity(
     extractedDescription !== "" && extractedDescription.length > existingDescription.length
       ? extractedDescription
       : existingDescription;
-  // Absent means accepted: the column's own default, and the state every row written by a
-  // caller that never enforced a declaration is in.
-  const incomingVerdict = entity.ontologyVerdict ?? "accepted";
-  // The row is admitted once EITHER side admits it. Never the other way round.
-  const staysAdmitted = sql`(ontology_entities.ontology_verdict = 'accepted' or ${incomingVerdict} = 'accepted')`;
 
-  await tx.execute(sql`
-    update ontology_entities
-    set confidence = ${nextConfidence},
-        description = ${nextDescription},
-        last_seen_at = now(),
-        updated_at = now(),
-        type = case
-          when ontology_entities.ontology_verdict = 'rejected' and ${incomingVerdict} = 'accepted'
-          then ${entity.type}
-          else ontology_entities.type
-        end,
-        ontology_verdict = case
-          when ${staysAdmitted} then 'accepted'
-          else 'rejected'
-        end,
-        ontology_rejection_reason = case
-          when ${staysAdmitted} then null
-          else ontology_entities.ontology_rejection_reason
-        end,
-        ontology_offending_type = case
-          when ${staysAdmitted} then null
-          else ontology_entities.ontology_offending_type
-        end
-    where id = ${existing.id}
-  `);
-  return existing.id;
+  const updated = await tx.execute<StoredVerdictRow>(
+    entityUpdateSql(entity, existing, nextConfidence, nextDescription),
+  );
+  const { ontology_verdict: verdict } = onlyRow(updated, "update ontology_entities");
+  return { id: existing.id, verdict };
 }
 
 /**
@@ -218,13 +251,17 @@ async function updateEntity(
  * refused. Binding the reason is what makes the verdict legible: a row marked
  * `rejected` with no reason is refused by `ontology_rejection_reason_requires_rejected`,
  * and a row marked `accepted` beside a reason is refused by the same CHECK.
+ *
+ * It reports the row it stored for the same reason the relationship upsert does: the class
+ * the CHECK admitted is only knowable from the write, and the summary counts rows, not
+ * intentions.
  */
 async function insertEntity(
   tx: DatabaseHandle,
   stackId: string,
   entity: ConsolidationEntity,
-): Promise<string> {
-  const inserted = await tx.execute<{ id: string }>(sql`
+): Promise<WrittenRow> {
+  const inserted = await tx.execute<StoredVerdictRow>(sql`
     insert into ontology_entities (
       stack_id, name, type, description, confidence,
       extracted_by_model, source_kind, pipeline,
@@ -241,10 +278,10 @@ async function insertEntity(
       ${entity.ontologyRejectionReason ?? null},
       ${entity.ontologyOffendingType ?? null}
     )
-    returning id
+    returning id, ontology_verdict
   `);
-  const created = onlyRow(inserted, "insert into ontology_entities");
-  return created.id;
+  const { id, ontology_verdict: verdict } = onlyRow(inserted, "insert into ontology_entities");
+  return { id, verdict };
 }
 
 /**
@@ -301,27 +338,42 @@ async function recordContribution(
  * — see {@link extractionModel}, which honours an injected chat backend — and is
  * **not** touched on update, matching the Python `update` statement.
  *
+ * Like {@link consolidateRelationshipRows}, both writes report the row they stored: the
+ * return value is the name→id map the call has always produced, now also carrying
+ * `rejectedRows`, so a caller can say how many entity rows are stored `rejected` instead of
+ * deriving it from the extraction it handed in.
+ *
  * @returns lowercased entity name → entity id, consumed by
- *   {@link consolidateRelationshipRows}.
+ *   {@link consolidateRelationshipRows}, carrying the rejected-row count.
  */
 export async function consolidateEntityRows(
   tx: DatabaseHandle,
   stackId: string,
   documentId: string,
   extracted: readonly ConsolidationEntity[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, string> & { readonly rejectedRows: number }> {
   // Bind the tenant before any write: every statement below is tenant-scoped, so under
   // RLS an unbound insert is refused. `stackId` is already this call's own filter.
   await bindCallerStack(tx, stackId, null);
 
   const nameToId = new Map<string, string>();
+  // Keyed by ROW id, so two extractions that fold onto one entity are counted once, and the
+  // LAST returned class wins: that is the class the row ended the pass with.
+  const verdictByRow = new Map<string, OntologyVerdict>();
 
   for (const entity of extracted) {
     const existing = await findExistingEntity(tx, stackId, entity);
-    const entityId =
-      existing === undefined
-        ? await insertEntity(tx, stackId, entity)
-        : existing.id;
+    // The write that decided this row's class, or `undefined` when nothing was written for
+    // it — an insertion and an update report their own stored verdict, and the update one is
+    // what makes a rejection count only when the row ended up rejected.
+    let written: WrittenRow | undefined;
+    let entityId: string;
+    if (existing === undefined) {
+      written = await insertEntity(tx, stackId, entity);
+      entityId = written.id;
+    } else {
+      entityId = existing.id;
+    }
 
     nameToId.set(entity.name.toLowerCase(), entityId);
 
@@ -332,11 +384,18 @@ export async function consolidateEntityRows(
     // "how many times we tried".
     const isNewCorroboration = await recordContribution(tx, entityId, documentId, stackId);
     if (existing !== undefined && isNewCorroboration) {
-      await updateEntity(tx, entity, existing);
+      written = await updateEntity(tx, entity, existing);
     }
+    // An entity whose contribution was a REPLAY runs no statement at all, so `written` is
+    // undefined and nothing is counted: its stored class was decided by an earlier ingest.
+    if (written !== undefined) verdictByRow.set(entityId, written.verdict);
   }
 
-  return nameToId;
+  // The map IS the return, so the count rides on it: every existing caller binds this value
+  // directly (`Map` methods, `ReadonlyMap` assignability), and turning it inside out into an
+  // outcome object would break consumers this change is not about. The extra member is what
+  // only the writes could answer — how many DISTINCT entity rows this pass left `rejected`.
+  return Object.assign(nameToId, { rejectedRows: rejectedRowCount(verdictByRow) });
 }
 /**
  * `consolidate_relationships` — upsert edges, report what they became.
@@ -498,8 +557,35 @@ const ACCEPTED_WINS_SET = sql`
   end
 `;
 
-/** The two column values the relationship upsert reports about the row it wrote. */
-type StoredEdgeRow = { readonly id: string; readonly ontology_verdict: OntologyVerdict };
+/**
+ * The two column values a write reports about the row it wrote.
+ *
+ * Every write that decides a row's class returns exactly this pair, so the caller reads the
+ * STORED verdict instead of computing one from the input it passed in.
+ */
+type StoredVerdictRow = { readonly id: string; readonly ontology_verdict: OntologyVerdict };
+
+/** The row id and the class Postgres stored for it, as a write reported them. */
+type WrittenRow = { readonly id: string; readonly verdict: OntologyVerdict };
+
+/**
+ * How many DISTINCT rows ended the pass stored `rejected`.
+ *
+ * Keyed by ROW id on purpose: two assertions that fold onto one row are one row, and the
+ * last verdict recorded for an id is the class the row ended the pass with. Shared by the
+ * entity and the relationship passes because the counting rule is the same one — deriving
+ * either number from the input would be wrong for the same two reasons.
+ *
+ * @param verdictByRow - Every row this pass wrote, mapped to the class it stored.
+ * @returns The number stored `rejected`.
+ */
+function rejectedRowCount(verdictByRow: ReadonlyMap<string, OntologyVerdict>): number {
+  let rejected = 0;
+  for (const verdict of verdictByRow.values()) {
+    if (verdict === "rejected") rejected += 1;
+  }
+  return rejected;
+}
 
 /**
  * The one row a statement that always produces exactly one row left behind.
@@ -612,8 +698,8 @@ async function upsertRelationshipRow(
   stackId: string,
   ids: { readonly fromId: string; readonly toId: string },
   relationship: ConsolidationRelationship,
-): Promise<{ readonly id: string; readonly verdict: OntologyVerdict }> {
-  const rows = await tx.execute<StoredEdgeRow>(relationshipUpsertSql(stackId, ids, relationship));
+): Promise<WrittenRow> {
+  const rows = await tx.execute<StoredVerdictRow>(relationshipUpsertSql(stackId, ids, relationship));
   const { id, ontology_verdict: verdict } = onlyRow(rows, "upsert into ontology_relationships");
   return { id, verdict };
 }
@@ -664,11 +750,7 @@ export async function consolidateRelationshipRowsDetailed(
     written += 1;
   }
 
-  let rejectedRows = 0;
-  for (const verdict of verdictByRow.values()) {
-    if (verdict === "rejected") rejectedRows += 1;
-  }
-  return { written, collisions, rejectedRows };
+  return { written, collisions, rejectedRows: rejectedRowCount(verdictByRow) };
 }
 
 /** What the compiler knows about a source it wants to register as a document. */

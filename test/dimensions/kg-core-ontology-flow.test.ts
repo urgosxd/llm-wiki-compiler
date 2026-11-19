@@ -98,6 +98,9 @@ beforeEach(() => {
   // The summary now carries the rejected-row count the WRITE reported (S6), so the stub
   // answers in the shape the real write returns instead of `undefined`.
   consolidateRelationshipRows.mockResolvedValue({ written: 0, collisions: [], rejectedRows: 0 });
+  consolidateEntityRows.mockResolvedValue(
+    Object.assign(new Map([["Acme", "id-acme"]]), { rejectedRows: 0 }),
+  );
 });
 
 describe("kg dimension with a declared ontology", () => {
@@ -134,7 +137,7 @@ describe("kg dimension with a declared ontology", () => {
       ],
     });
 
-    expect(committed.summary).toContain("1 triplets rejected by ontology");
+    expect(committed.summary).toContain("1 triplet rejected by ontology");
   });
 
   it("keeps the summary clean when nothing was rejected", async () => {

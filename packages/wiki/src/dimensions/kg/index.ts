@@ -115,6 +115,8 @@ import type { ExtractionOutcome, ExtractionResult, Ontology } from "@repo/kg";
 
 import { createLedgerReader, recordExtractedChunkHashes } from "./chunk-reuse.js";
 import type { ExtractedChunkHashesReader } from "./chunk-reuse.js";
+import { summaryFor } from "./summary-note.js";
+import type { DryRunReport, RejectedRowCounts } from "./summary-note.js";
 
 import { getEmbeddingProvider } from "../../utils/embedding-provider.js";
 import { getProvider } from "../../utils/provider.js";
@@ -181,25 +183,6 @@ function sourceLabel(source: string): string {
   return createHash("sha256").update(source).digest("hex").slice(0, SOURCE_LABEL_CHARS);
 }
 
-/**
- * What a detect-only run would have sent, all of it derived without a provider call.
- *
- * S10 is the reason this exists: a dry run whose answer is only "ok" has learned nothing,
- * and the numbers an operator needs before approving a real run are exactly these — how
- * many requests the document costs and whether that fits the cap. Every count here comes
- * from the chunker's output, so reporting them costs a tokenisation pass and no network.
- */
-interface DryRunReport {
-  /** Chunks the real path would produce, and therefore the unit requests are counted in. */
-  readonly chunks: number;
-  /** Chat requests extraction would send: one per chunk, sequentially. */
-  readonly chatRequests: number;
-  /** Embedding requests chunking would send: the whole chunk list in one batch. */
-  readonly embeddingRequests: number;
-  /** The cap the would-be request count was judged against. */
-  readonly cap: number;
-}
-
 /** Handle carried between `prepare` and `commit` for the graph dimension. */
 interface KgHandle {
   /**
@@ -220,13 +203,14 @@ interface KgHandle {
   /** Triplets the declared ontology turned away; empty when none was supplied. */
   readonly rejected: readonly KgRejection[];
   /**
-   * Relationship rows `commit` left stored with class `rejected`.
+   * Rows `commit` left stored with class `rejected`, one count per table.
    *
-   * Assigned by the write, never computed from {@link KgHandle.relationships}: the class a
-   * collision decides lives in SQL, so only the write can report it. Absent on a run that
-   * wrote nothing at all, which is why the summary reads it as `0`.
+   * Assigned by the writes, never computed from {@link KgHandle.relationships} or
+   * {@link KgHandle.entities}: the class a collision decided lives in SQL, so only the write
+   * can report it — for entity rows the same as for edges. Absent on a run that wrote
+   * nothing at all, which is why the summary reads it as zero.
    */
-  storedRejectedRows?: number;
+  storedRejectedRows?: RejectedRowCounts;
   /**
    * Chunks whose extraction failed after every retry was spent.
    *
@@ -391,113 +375,6 @@ function ontologyArgs(ontology: Ontology | undefined): [] | [Ontology] {
 }
 
 /**
- * Renders the rejection counts for a commit summary, or nothing when clean.
- *
- * A summary is the only per-document signal a caller sees without querying the
- * graph, so a run that silently dropped a third of its triplets must not read
- * the same as a run that found only a third.
- *
- * ## Why there are TWO numbers, and why they are not promised to be equal
- *
- * The first count is TRIPLETS the classifier refused. The second is relationship
- * ROWS this ingest stored with class `rejected`, read from the write itself. A
- * reader can check the second against the graph; the first alone was a claim with
- * nothing behind it. The two disagree legitimately, in three measured ways:
- *
- * 1. **A duplicate identity collapses.** `unique_edge_per_stack
- *    (stack_id, from_entity_id, to_entity_id, type)` admits one row per identity, and
- *    `mergeRelationships` (`core/graph-extraction.ts`) folds two triplets naming the same
- *    subject, relation and object before the write sees them — so two refusals are two
- *    triplets and ONE row.
- * 2. **An accepted triplet on the same identity wins the row.** S7's rule —
- *    `ACCEPTED_WINS_SET` in `core/document-consolidation.ts` — stores the accepted row
- *    when one identity is both refused and admitted, so a refusal can be counted with no
- *    rejected row to show for it.
- * 3. **A re-ingest does not move a stored class.** The relationship upsert never
- *    downgrades an acceptance, and `updateEntity` (`core/document-consolidation.ts`) runs
- *    only on NEW corroboration, so what a replay's classifier decides is not what the row
- *    already stores: a refusal is counted while the row it names stays accepted, and a
- *    byte-identical replay reports the same refusals again over a graph it did not move.
- *
- * All three are why the line names two counts with two nouns instead of asserting an
- * equality the schema makes false.
- *
- * @param rejected - Triplets the ontology turned away.
- * @param storedRows - Relationship rows the same ingest stored as `rejected`.
- * @returns A leading-comma fragment, or an empty string when nothing was rejected.
- */
-function rejectionNote(rejected: readonly KgRejection[], storedRows: number): string {
-  if (rejected.length === 0) return "";
-  const stored = `${pluralize(storedRows, "relationship row")} stored as rejected`;
-  return `, ${rejected.length} triplets rejected by ontology, ${stored}`;
-}
-
-/**
- * Renders the failed-chunk count, or nothing when every chunk answered.
- *
- * The same reasoning as {@link rejectionNote}, for the same reason: a document
- * whose graph was built from two of five chunks must not read exactly like one
- * that only had two chunks' worth of facts in it.
- *
- * @param failedChunks - Chunks that produced nothing after their retries.
- * @returns A leading-comma fragment, or an empty string when nothing failed.
- */
-function extractionNote(failedChunks: number): string {
-  return failedChunks === 0 ? "" : `, ${failedChunks} chunks failed extraction`;
-}
-
-/**
- * Renders the shape-mangled chunk count, or nothing when every envelope read.
- *
- * The same reasoning as {@link rejectionNote}, for a third distinct cause: a
- * document whose responses came back uninjured and a document whose responses
- * came back mangled both show zero of the triplets they might have had, and only
- * the second one is a defect worth chasing.
- *
- * @param mangledChunks - Chunks that answered with no usable envelope.
- * @returns A leading-comma fragment, or an empty string when none was mangled.
- */
-function mangledNote(mangledChunks: number): string {
-  return mangledChunks === 0 ? "" : `, ${mangledChunks} chunks returned a mangled response`;
-}
-
-/**
- * Renders the schema-violation count, or nothing when the model obeyed.
- *
- * The same reasoning as {@link rejectionNote}, for the one cause the ontology
- * cannot see: on a provider that treats the tool schema's `enum` as a hint, an
- * invented type is rejected exactly like an undeclared one, so a Stack whose
- * gateway ignores `strict` reads like a Stack whose model simply drifted. This
- * fragment names the provider's non-enforcement, which is a configuration
- * remedy, not a prompt one.
- *
- * @param schemaViolations - `type` values the model put outside the schema.
- * @returns A leading-comma fragment, or an empty string when nothing violated.
- */
-function schemaViolationNote(schemaViolations: number): string {
-  return schemaViolations === 0 ? "" : `, ${schemaViolations} types outside the declared schema`;
-}
-
-/**
- * Renders the reused-versus-extracted split, or nothing when every chunk was extracted.
- *
- * The only fragment conditional on a skip, so a first ingest renders exactly the summary it
- * always did. Both counts are named, because "reused" alone would leave a reader guessing
- * whether the rest was extracted or lost.
- *
- * @param reusedChunks - Chunks skipped because their hash was already extracted.
- * @param extractedChunks - Chunks this run sent to the model.
- * @returns A leading-comma fragment, or an empty string when nothing was reused.
- */
-function reuseNote(reusedChunks: number, extractedChunks: number): string {
-  if (reusedChunks === 0) return "";
-  return `, ${pluralize(reusedChunks, "chunk")} reused, ${pluralize(extractedChunks, "chunk")} extracted`;
-}
-
-/** Which head a summary renders: the detect-only run, or the persisted one. */
-type SummaryKind = "dry-run" | "commit";
-
-/**
  * How many chunks the chunker would produce for `body`, without embedding anything.
  *
  * The SAME three steps `chunkAndEmbed` takes before it calls `embedTexts`: a blank body
@@ -534,37 +411,6 @@ function dryRunReportFor(chunks: number, cap: number): DryRunReport {
     embeddingRequests: chunks === 0 ? 0 : EMBEDDING_REQUESTS_PER_BATCH,
     cap,
   };
-}
-
-/**
- * Renders what a detect-only run would have sent, or nothing when no report is carried.
- *
- * The empty answer matters as much as the filled one: `commit` routes a real run whose
- * body chunked to nothing through the same `dry-run` head, and that summary must read
- * exactly as it did before this report existed.
- *
- * @param report - The would-be request counts, or `undefined` for a run without one.
- * @returns A leading-comma fragment, or an empty string when there is no report.
- */
-function dryRunNote(report: DryRunReport | undefined): string {
-  if (report === undefined) return "";
-  const chatRequests = pluralize(report.chatRequests, "chat request");
-  const embeddingRequests = pluralize(report.embeddingRequests, "embedding request");
-  return (
-    `, would send ${chatRequests}, ${embeddingRequests}` +
-    `, within the ${report.cap} request cap`
-  );
-}
-
-/**
- * A count with its noun, pluralised, so a one-request run does not read `1 requests`.
- *
- * @param count - How many of the thing there are.
- * @param noun - The singular name of the thing.
- * @returns e.g. `1 chat request` or `4 chat requests`.
- */
-function pluralize(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /**
@@ -638,44 +484,6 @@ function detectOnlyHandle(
 }
 
 /**
- * Renders one document's summary: the head counts, then every degraded-run note.
- *
- * ## Why the fragments are composed here and nowhere else
- *
- * The summary is the only per-document signal a caller sees without querying the
- * graph, and it has exactly two producers: the detect-only path and the persist
- * path. Composing it at each call site kept the note ORDER in two template
- * literals at once, so appending a note to one and not the other made a dry run
- * describe a run the real commit does not perform — a divergence no assertion
- * catches, because both strings stay well-formed. One composition point means a
- * new note is added once and both paths report it.
- *
- * The order is load-bearing and is the order of the calls below:
- * {@link rejectionNote} comes FIRST — its exact wording and its position are
- * pinned by callers and predate the other three — then the failed-chunk, mangled
- * envelope and schema-violation notes, then the reuse split. Each note carries its own
- * leading comma and renders nothing when its count is zero, so the head is followed
- * directly by an empty string on a clean run and the summary is the counts alone.
- *
- * The reuse note comes LAST because it is appended to a summary that already exists: a
- * run that reused nothing renders the exact string it always did.
- *
- * @param kind - Which head to render: the detect-only run or the persisted one.
- * @param handle - Prepared chunks and extraction, for the counts and the notes.
- * @returns The summary string for this document.
- */
-function summaryFor(kind: SummaryKind, handle: KgHandle): string {
-  // A detect-only handle holds no chunks: what it would have produced lives in its
-  // report. Every other handle counts its own chunks, so a real run whose body chunked
-  // to nothing reports `0 chunks` exactly as it did before the report existed.
-  const chunkCount = handle.dryRunReport?.chunks ?? handle.chunks.length;
-  const counts = `${chunkCount} chunks, ${handle.entities.length} entities`;
-  const head =
-    kind === "dry-run" ? `kg:dry-run(${counts}${dryRunNote(handle.dryRunReport)})` : `kg:${counts}`;
-  return `${head}${rejectionNote(handle.rejected, handle.storedRejectedRows ?? 0)}${extractionNote(handle.failedChunks)}${mangledNote(handle.mangledChunks)}${schemaViolationNote(handle.schemaViolations)}${reuseNote(handle.reusedChunks, handle.extractedChunks)}`;
-}
-
-/**
  * Write the extracted graph into Postgres inside one transaction.
  *
  * The document row is registered FIRST, in the same transaction as the
@@ -740,9 +548,13 @@ async function writeGraphRows(
   const outcome = await consolidateRelationshipRows(
     tx, options.stackId, handle.relationships, nameToId,
   );
-  // Carried from the write, for the summary in {@link rejectionNote}: the class a
-  // collision decided is only observable in the row Postgres returned.
-  handle.storedRejectedRows = outcome.rejectedRows;
+  // Carried from the writes, for the summary in {@link summaryFor}: the class a collision
+  // decided is only observable in the row Postgres returned, and an entity's class is decided
+  // the same way. Both numbers are the graph's own, so a reader can check them against it.
+  handle.storedRejectedRows = {
+    relationships: outcome.rejectedRows,
+    entities: nameToId.rejectedRows,
+  };
   // LAST, and in the SAME transaction: the graph write and the record of what was
   // extracted for this source cannot disagree, and a rolled-back commit leaves no hash
   // claiming an extraction that never landed.

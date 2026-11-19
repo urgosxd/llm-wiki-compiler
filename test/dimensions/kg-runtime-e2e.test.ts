@@ -257,6 +257,24 @@ async function storedEdges(type: string, verdict: string): Promise<number> {
 }
 
 /**
+ * How many of that Stack's ENTITY rows carry one type and one class.
+ *
+ * The second table the summary counts, read the same way as {@link storedEdges}: the line
+ * names both tables, so both numbers have to be checkable against the graph it describes.
+ *
+ * @param type - The stored `type` column.
+ * @param verdict - `accepted` or `rejected`.
+ * @returns The row count.
+ */
+async function storedEntities(type: string, verdict: string): Promise<number> {
+  const rows = (await statusHarness.db.execute(
+    `select count(*)::int as n from ontology_entities
+     where stack_id = '${statusHarness.stackId}' and type = '${type}' and ontology_verdict = '${verdict}'`,
+  )) as { n: number }[];
+  return rows[0]?.n ?? 0;
+}
+
+/**
  * Two refusals of ONE identity: two triplets, one row.
  *
  * A named function rather than an inline arrow because this file's `max-lines-per-function`
@@ -280,7 +298,8 @@ async function reportsBothNumbersWhenRefusalsCollapse(): Promise<void> {
   });
 
   expect(summary).toBe(
-    "kg:1 chunks, 2 entities, 2 triplets rejected by ontology, 1 relationship row stored as rejected",
+    "kg:1 chunks, 2 entities, 2 triplets rejected by ontology, " +
+      "1 ontology_relationships row and 0 ontology_entities rows stored as rejected",
   );
   // The line is only worth anything if the row it names EXISTS, and there is exactly ONE:
   // the collapse is what makes 2 and 1 both true at the same time.
@@ -313,7 +332,8 @@ async function reportsTheRefusalThatLeftNoRejectedRow(): Promise<void> {
   });
 
   expect(summary).toBe(
-    "kg:1 chunks, 2 entities, 1 triplets rejected by ontology, 0 relationship rows stored as rejected",
+    "kg:1 chunks, 2 entities, 1 triplet rejected by ontology, " +
+      "0 ontology_relationships rows and 0 ontology_entities rows stored as rejected",
   );
   expect(await storedEdges("WORKS_AT", "rejected")).toBe(0);
   expect(await storedEdges("WORKS_AT", "accepted")).toBe(1);
@@ -339,6 +359,44 @@ async function keepsACleanSummaryUnchanged(): Promise<void> {
   expect(summary).toBe("kg:1 chunks, 3 entities");
 }
 
+/**
+ * One refusal that stored an ENTITY row as well as an edge: two rows, two tables.
+ *
+ * This is the case S6 was still half-checkable without. A reader who counted rejected rows
+ * in `ontology_entities` used to find rows the line never mentioned, because the line's
+ * second number counted relationship rows only. Now the same triplet's two rows are both
+ * reported, each against the table it lives in.
+ *
+ * @returns Nothing; every assertion is in the body.
+ */
+async function reportsTheEntityRowTheSameRefusalStored(): Promise<void> {
+  // `ALIEN_CONSTRUCT` is not a type the default ontology declares, so the SUBJECT's type is
+  // the only fault: the edge is stored rejected, and so is the endpoint that carries the
+  // refused type, while the object endpoint stays accepted. One triplet, two rejected rows,
+  // two different tables — which is why the line counts them separately and promises nothing
+  // about them matching. The closing fragment is not a second failure: an invented type is
+  // also a model-side schema violation, so that note reports it beside the ontology's verdict.
+  const summary = await statusSummary(`https://e2e.test/endpoint-${statusHarness.stackId}.md`, {
+    triplets: [
+      {
+        subject: { name: "Zorp", type: "ALIEN_CONSTRUCT" },
+        relation: { type: "PART_OF" },
+        object: { name: "Beacon", type: "SYSTEM" },
+      },
+    ],
+  });
+
+  expect(summary).toBe(
+    "kg:1 chunks, 2 entities, 1 triplet rejected by ontology, " +
+      "1 ontology_relationships row and 1 ontology_entities row stored as rejected, " +
+      "1 types outside the declared schema",
+  );
+  // Both numbers are the graph's own: `storedEntities` reads the row the entity write made,
+  // not a count derived from the extraction the test handed in.
+  expect(await storedEdges("PART_OF", "rejected")).toBe(1);
+  expect(await storedEntities("ALIEN_CONSTRUCT", "rejected")).toBe(1);
+}
+
 describe("the kg commit summary counts triplets AND the rows they became", () => {
   it.skipIf(!reachable)(
     "reports both numbers when two refusals collapse",
@@ -353,6 +411,11 @@ describe("the kg commit summary counts triplets AND the rows they became", () =>
   it.skipIf(!reachable)(
     "keeps a clean summary exactly as it reads today",
     keepsACleanSummaryUnchanged,
+    60_000,
+  );
+  it.skipIf(!reachable)(
+    "reports the entity row the same refusal stored",
+    reportsTheEntityRowTheSameRefusalStored,
     60_000,
   );
 });
