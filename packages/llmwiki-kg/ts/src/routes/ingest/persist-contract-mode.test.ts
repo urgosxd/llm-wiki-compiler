@@ -36,7 +36,7 @@ vi.hoisted(() => {
 import request from "supertest";
 import express from "express";
 import type { Express } from "express";
-import type { Response } from "supertest";
+import type { Test } from "supertest";
 
 import { createRequireApiKey } from "../../auth.js";
 import { parseConfig } from "../../config.js";
@@ -101,8 +101,13 @@ async function fixture(label: string): Promise<{ stackId: string; documentId: st
   return { stackId, documentId: await createDocument(stackId, BODY) };
 }
 
-/** One ingest request carrying an `ontology_contract` value, or none when omitted. */
-function ingest(stackId: string, documentId: string, contract?: string): Response {
+/**
+ * One ingest request carrying an `ontology_contract` value, or none when omitted.
+ *
+ * The result is supertest's `Test` — a thenable request — not a settled `Response`, because
+ * the call sites still have to attach `.expect(...)`. Awaiting it yields the `Response`.
+ */
+function ingest(stackId: string, documentId: string, contract?: string): Test {
   const query = contract === undefined ? "" : `?ontology_contract=${contract}`;
   return request(app).post(ingestUrl(stackId, documentId, query));
 }
