@@ -159,10 +159,11 @@ parameter is the Stack `uuid`; `GET /stacks` lists them.
 
 ## What ingest does with the declaration
 
-Extraction is **oriented** by the declaration, not filtered by it. The `entityTypes`
-and `relationshipTypes` lists reach the model inside the extraction tool schema, and
-the prompt presents them as the vocabulary this Stack already uses. What comes back is
-not then checked against them for admission:
+Under the endpoint's default `open` contract, extraction is **oriented** by the
+declaration, not filtered by it. The `entityTypes` and `relationshipTypes` lists reach
+the model inside the extraction tool schema, and the prompt presents them as the
+vocabulary this Stack already uses. What comes back is not then checked against them
+for admission:
 
 - An entity type or relationship type outside the declaration is **kept**, with the
   type or predicate the model proposed. Nothing is dropped for being out of catalog.
@@ -187,16 +188,37 @@ count and any `truncations` that bounded the answer:
 { "open": { "outside_catalog": 2, "kinds": ["entity_type", "predicate"], "samples": [], "structural": 0, "truncations": [] } }
 ```
 
-That section is the reading of a thin extraction: it tells you the model produced
-candidates the declaration does not name, and it no longer means the graph lost them.
+Under `open`, that section is the reading of a thin extraction: it tells you the model
+produced candidates the declaration does not name, and it no longer means the graph
+lost them.
 
-<Note>
-  **A narrow declaration no longer produces a closed graph.** The strict admission
-  contract still exists in code and is the default of `extractGraphFromChunks`, but
-  the HTTP ingest endpoint runs the open contract and exposes no option to switch.
-  If you need a closed graph, enforce it downstream — a canonical `?type=` filter
-  returns classified matches only.
-</Note>
+### Choosing the admission contract
+
+**A narrow declaration does not close the graph by default, and the contract is a
+query parameter.** `POST /stacks/:stackId/documents/:docId/ingest` takes
+`?ontology_contract=`, which accepts three values:
+
+| `ontology_contract` | What happens to a triplet the declaration turns away |
+| --- | --- |
+| `open`, or omitted | Nothing. No ontology verdict is taken, nothing is refused, and every extracted triplet is stored. This is the default |
+| `strict` | The enforcing classifier runs and the refused triplet is **dropped**, so it produces no row |
+| `persist` | The enforcing classifier runs, nothing is refused, and both classes are stored |
+
+A refused row under `persist` carries its class, its reason and the type that caused
+it. The reason is one of `UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`,
+`SUBJECT_TYPE_NOT_IN_DOMAIN` or `OBJECT_TYPE_NOT_IN_RANGE`.
+
+**`persist` is the contract the `kg` dimension already runs.** A dimension run with no
+contract named enforces the declaration and keeps what it refuses, so the same
+document and the same ontology produce the same class counts through the dimension and
+through this endpoint with `ontology_contract=persist`. That equivalence is why the
+value exists; `open` and `strict` behave exactly as they always did.
+
+The document's `audit.ontology` section still counts the triplets the declaration
+turned away, with its `reason_codes` and up to five `samples` naming the
+`offending_type`. That is a count of refusals rather than of rows: a refusal also
+marks the endpoint that carries the refused type, so the rejected-row count is read
+from the audit together with the endpoints, never from the audit alone.
 
 ## When no declaration is stored
 

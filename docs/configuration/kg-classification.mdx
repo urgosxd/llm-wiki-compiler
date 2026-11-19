@@ -149,11 +149,18 @@ still match through their label, so human-verified facts keep answering exactly 
 before. Rows that carry a recorded `pending` decision do not, because their stored
 `type` is an extractor proposal and not a classification.
 
-**(c) The Stack's declared vocabulary is orientation, not an admission filter.** A
-narrow declaration no longer produces a closed graph. The strict path still exists in
-code (`extractGraphFromChunks` accepts `contract: "strict"`, and
-`parseTripletsWithOntology` / `admitStandaloneEntities` are unchanged), but the HTTP
-ingest endpoint does not expose that choice, and no flag exists to request it.
+**(c) Enforcing the Stack's declared vocabulary at admission is a query parameter.**
+The `kg` dimension enforces the declaration when no contract is named, and keeps the
+triplets it refuses. Over HTTP, `POST /stacks/:stackId/documents/:docId/ingest` runs
+the `open` contract unless it is given `?ontology_contract=`, which accepts three
+values. `open` takes no verdict from the declaration and refuses nothing, so a narrow
+declaration does not close the graph. `strict` runs the enforcing classifier and drops
+the triplet it refuses. `persist` runs that same classifier, refuses nothing, and
+stores both classes, each refused row carrying its class, its reason — one of
+`UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`, `SUBJECT_TYPE_NOT_IN_DOMAIN` or
+`OBJECT_TYPE_NOT_IN_RANGE` — and the offending type, which is what the dimension
+already does. See
+[Stack ontology](/configuration/stack-ontology#choosing-the-admission-contract).
 
 **(d) Relation classification metadata is not on the AKS wire.** The AKS relationship
 model forbids extra fields and has no `properties` object, so a relation's

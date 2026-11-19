@@ -498,6 +498,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys; the audit column is where a consumer can read whether a small
   `entities_extracted` was a thin document or an impaired run.
 
+- **`ontology_contract` on the KG ingest route gains a third value, `persist`: it
+  enforces the ontology and keeps what it refuses.**
+  `POST /stacks/:stackId/documents/:doc_id/ingest?ontology_contract=` accepted `open`,
+  the default, which takes no ontology verdict and refuses nothing, and `strict`,
+  which drops the triplet the declaration turns away. It also accepts `persist` now,
+  which runs the same enforcing classifier as `strict`, refuses nothing, and stores
+  both classes — each refused row carrying its class, its reason
+  (`UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`, `SUBJECT_TYPE_NOT_IN_DOMAIN`,
+  `OBJECT_TYPE_NOT_IN_RANGE`) and the type that caused it. The value exists because
+  the wiki `kg` dimension already behaves this way when no contract is named, so the
+  same document and the same ontology produced different class counts depending on
+  which entry point ingested it, with nothing in the request naming the difference.
+
+  **Additive, and nothing needs upgrading.** `open` and `strict` are unchanged for
+  every caller, and a request that names neither still gets `open` and answers
+  exactly as it did: same rows, same counts, same response body. The document's
+  `audit.ontology` section still counts refused triplets, and a refusal can mark an
+  endpoint as well as its edge, so a `persist` ingest is read from that count
+  together with the endpoints rather than from the count alone. See
+  [Stack ontology](https://llmwiki.atomicstrata.ai/configuration/stack-ontology#choosing-the-admission-contract).
+
 ### Changed
 
 - **Query page selection sends the wiki index before the question.** Without embeddings, every query on a wiki selects pages over the same index, which previously came after the question, so no two queries shared a prompt prefix. With the index first, backends that reuse a common prefix can skip it on later queries; the prompt size is unchanged. Replaying 5 queries on an 11-document docs wiki offline, the shared-prefix share of selection prompts rose from 0.4% to 80% (the most possible, since the first query has nothing earlier to share).
