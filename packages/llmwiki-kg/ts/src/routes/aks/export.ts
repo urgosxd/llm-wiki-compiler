@@ -154,10 +154,20 @@ async function loadBundleContents(
  * ## `accepted_only` is a class filter, never a score
  *
  * The ontology's verdict is its own axis: no numeric bound stands in for it, and no
- * confidence value is touched by it. A refused entity is exported by default, carrying
- * its class and its reason, and omitted only when the caller asks for accepted items
- * alone — in which case the edges that ended at it go with it, because an exported edge
- * never dangles.
+ * confidence value is touched by it. The polarity is the one every graph surface uses —
+ * `accepted_only: true` narrows to the accepted class — but the DEFAULT here is not:
+ * this is the ONE endpoint that is accepted-only unless told otherwise
+ * (`ExportQuery`, `pydanticBoolean().default(true)`, `query-params.ts:160`). A refused
+ * entity is therefore OMITTED by default and appears only when the caller opts in with
+ * `accepted_only=false` — and the edges that ended at an omitted entity go with it,
+ * because an exported edge never dangles.
+ *
+ * That asymmetry with the other graph surfaces is deliberate, not an oversight: a bundle
+ * is the only payload in this service validated against a vendored contract that closes
+ * `AKSRelationship`, so a refused row cannot be marked on this surface at all (see the
+ * route block above), and the default must not hand unmarked refused rows to the
+ * consumer least able to notice. Under `accepted_only=false` refused rows do arrive,
+ * unmarked.
  */
 async function loadExportEntities(
   tx: Database,
