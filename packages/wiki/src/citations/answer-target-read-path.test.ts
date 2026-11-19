@@ -12,8 +12,27 @@
  *   - `collectViewerPages` (`packages/wiki/src/viewer/collect.ts`) — page ids and the
  *     resolved outgoing links behind `/api/graph`.
  *
- * Every one of their ids is a QUALIFIED page id whose page part is SLUGIFIED, while a
- * page's stored `slug` is its RAW filename stem. The round trip holds only because
+ * WHAT EACH EMITTER'S ID IS — not the same thing, and the difference is the point:
+ *
+ *   - `collectAnswerCitationIndex` carries the RAW filename stem:
+ *     `const slug = file.slice(0, -3)` (`packages/wiki/src/citations/answer-index.ts:33`)
+ *     feeding `id: \`${pageDirectory}/${slug}\`` (`:36`);
+ *   - `collectViewerPages` carries the RAW stem too: the page id is
+ *     `\`${page.pageDirectory}/${page.slug}\`` (`packages/wiki/src/viewer/collect.ts:217`);
+ *   - `pageLinkRefs` is the ONLY one that slugifies: it carries the normalized target
+ *     (`packages/wiki/src/pages/read.ts:82`), whose page part `normalizeWikilinkTarget`
+ *     (`packages/wiki/src/wiki/wikilink-tokens.ts:77`) slugifies.
+ *
+ * So of the 32 ids this file drives, the 8 `link from …` ids are the only ones that can
+ * exercise the slugified qualified path, and 4 of those 8 actually differ from their raw
+ * stem (`7. Subdominios DDD`, `2024 Recap`, `東京 Café`, `6. Query Titled`); the other 24
+ * ids sit on the pre-existing exact-stem path. Measured the hard way: reverting the
+ * read-path slugified pass fails ONLY the `link from …` entries — zero `index id`,
+ * `viewer id` or `viewer out`. The last test in this file pins that leg on purpose, so
+ * dropping the title-shaped pages from the seed cannot leave this file green while
+ * covering nothing this branch fixed.
+ *
+ * A page's stored `slug` is its RAW filename stem, so the round trip holds only because
  * `readPageRecord` resolves exact-stem-first, then slugified, inside the namespace. This
  * file asserts the round trip through the public read path; it asserts nothing about
  * internals.
@@ -157,4 +176,26 @@ describe("read_page follows the identities query_wiki emits (S7)", () => {
     const report = await reportAnswerCitations(root, "Grounded in [[7-subdominios-ddd]].");
     expect(report.citations).toEqual([{ target: "7-subdominios-ddd", status: "resolved", pageId: "concepts/7. Subdominios DDD" }]);
   });
+});
+
+/**
+ * Covers S7. This seed is the only place the slugified qualified path is exercised: the
+ * index (`packages/wiki/src/citations/answer-index.ts:36`) and viewer
+ * (`packages/wiki/src/viewer/collect.ts:217`) ids carry the RAW stem, and only
+ * `pageLinkRefs` (`packages/wiki/src/pages/read.ts:82`) slugifies. Without this pin,
+ * dropping the title-shaped pages from the seed would leave the property green while
+ * covering nothing this branch fixed.
+ */
+it("keeps the slugified leg under test: the link emitter slugifies, the read path follows", async () => {
+  const seeds = [
+    ["concepts", "7. Subdominios DDD", "concepts/7-subdominios-ddd"],
+    ["concepts", "2024 Recap", "concepts/2024-recap"],
+    ["concepts", "東京 Café", "concepts/東京-café"],
+    ["queries", "6. Query Titled", "queries/6-query-titled"],
+  ] as const;
+  const root = await makeStack(seeds.map(([directory, stem], i) => ({ directory, stem, title: `Slug ${i}` })));
+  for (const [i, [directory, stem, id]] of seeds.entries()) {
+    expect(pageLinkRefs(`see [[${directory}/${stem}]]`).map((ref) => ref.slug)).toEqual([id]);
+    expect((await readPageRecord(root, id))?.title).toBe(`Slug ${i}`);
+  }
 });
