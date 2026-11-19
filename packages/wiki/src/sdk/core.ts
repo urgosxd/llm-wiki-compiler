@@ -209,11 +209,19 @@ export function createWikiCoreAtRoot(root: string, options: CreateWikiOptions): 
     // buildContextPack uses `prompt`/`budget` field names (NOT question/tokenBudget).
     // Semantic retrieval is opportunistic: falls back to lexical when no embeddings
     // are available, so no credential guard is needed here.
+    //
+    // `env` is forwarded for the reason `status` states, and the pack has two seams for
+    // it to reach: `buildContextPack` resolves its viewer snapshot
+    // (`context/build.ts` → `buildViewerSnapshot(root, options.env)`) and its project
+    // state (`collectProjectState(root, options.env)`), and BOTH default to
+    // `process.env`. Dropping it made a handle bound to Stack B rank Stack A's rows —
+    // other tenants' page ids, titles and chunk text in a well-formed pack.
     getContextPack: (opts) =>
       runQuiet(() =>
         buildContextPack({
           root,
           prompt: opts.prompt,
+          env,
           ...(opts.budget !== undefined && { budget: opts.budget }),
           ...(opts.depth !== undefined && { depth: opts.depth }),
           ...(opts.topPages !== undefined && { topPages: opts.topPages }),

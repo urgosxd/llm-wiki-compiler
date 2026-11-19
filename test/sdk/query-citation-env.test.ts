@@ -31,16 +31,18 @@
  *
  * The root is a real temporary directory with no `wiki/` tree (asserted below), so no
  * case can pass by scanning files: every page these assertions resolve exists only as
- * a `wiki.pages` row. The two Stacks are provisioned through the shared lifecycle
- * fixture, and block only on the mocked LLM module — no provider spend.
+ * a `wiki.pages` row. The two Stacks and the ambient binding come from
+ * `test/sdk/two-stack-env.ts`, and block only on the mocked LLM module — no provider
+ * spend.
  */
 import { afterAll, expect, it, vi } from "vitest";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { createProbeStack } from "../dimensions/harness-lifecycle.js";
-import { seedConceptPage } from "../fixtures/mcp-stack-rows.js";
 import { createWiki } from "../../packages/wiki/src/sdk/wiki.js";
+import {
+  bindProcessTo,
+  createTwoStacks,
+  expectNoWikiTree,
+  requireReachable,
+} from "./two-stack-env.js";
 
 // The answer is deterministic and local: the LLM module is the only provider seam the
 // query crosses, so mocking it is what keeps this proof offline. `tools` is present on
@@ -58,49 +60,22 @@ vi.mock("../../packages/wiki/src/utils/llm.js", () => ({
   ),
 }));
 
-/** A page body in the shape the compiler writes, with frontmatter. */
-function pageBody(title: string, slug: string): string {
-  return `---\ntitle: ${title}\nsummary: only this Stack holds ${slug}\n---\n\nOnly this Stack holds ${slug}.\n`;
-}
-
-const ambient = await createProbeStack("sdk-citation-env-ambient");
-const bound = await createProbeStack("sdk-citation-env-bound");
-const root = await mkdtemp(path.join(os.tmpdir(), "sdk-citation-env-"));
+const two = await createTwoStacks("sdk-citation-env");
 
 afterAll(async () => {
-  vi.unstubAllEnvs();
-  await rm(root, { recursive: true, force: true });
-  await ambient.harness.cleanup();
-  await bound.harness.cleanup();
+  await two.release();
 });
 
 it("resolves citations from the Stack the handle names, never the ambient one", async () => {
-  expect(
-    ambient.harness.reachable && bound.harness.reachable,
-    "no database reached this worker: the cross-tenant citation proof is void",
-  ).toBe(true);
+  requireReachable(two);
   // No `wiki/` tree at all: no verdict below can come from a disk scan.
-  await expect(readdir(path.join(root, "wiki"))).rejects.toThrow(/ENOENT/);
-
-  await seedConceptPage(
-    ambient.harness,
-    "alpha-a",
-    pageBody("Alpha A", "alpha-a"),
-  );
-  await seedConceptPage(
-    bound.harness,
-    "alpha-b",
-    pageBody("Alpha B", "alpha-b"),
-  );
-
+  await expectNoWikiTree(two.root);
   // The process serves Stack A; the handle names Stack B.
+  bindProcessTo(two.ambient);
   vi.stubEnv("LLMWIKI_PROVIDER", "anthropic");
   vi.stubEnv("ANTHROPIC_API_KEY", "offline-key");
-  vi.stubEnv("LLMWIKI_EMBEDDINGS", "off");
-  vi.stubEnv("AKS_DATABASE_URL", String(ambient.env().AKS_DATABASE_URL));
-  vi.stubEnv("AKS_STACK_ID", ambient.harness.stackId);
 
-  const wiki = createWiki({ root, env: bound.env() });
+  const wiki = createWiki({ root: two.root, env: two.bound.env() });
   const result = (await wiki.query("what is alpha?")) as {
     pageIds?: string[];
     answerCitations?: {

@@ -8,15 +8,18 @@
  * keeps it honest is parity against the real one. That parity is frozen here as two
  * literal arrays produced by `vitest related` at commit
  * a12fd91f1fe850e77b46a0698cec29ae22e188fa: 6 files for
- * `packages/wiki/src/index.ts`, and 24 for that file plus
+ * `packages/wiki/src/index.ts`, and 25 for that file plus
  * `packages/wiki/src/sdk/compiler-composition.ts`.
  *
- * THE PAIR ORACLE WAS LAST RE-FROZEN AT 24 BY `test/sdk/query-citation-env.test.ts`.
- * That suite drives `createWiki({ root, env }).query()` through the SDK facade, so it
- * reaches both oracle inputs: the live `vitest related` above returns it in the pair
- * selection and not in the single one. It is an addition to the frozen oracle, not a
- * loosening of it -- the list still names every file exactly, and the entry below that
- * the core collapse removed stays out for the reason recorded here.
+ * THE PAIR ORACLE WAS LAST RE-FROZEN AT 25 BY `test/sdk/context-pack-env.test.ts`.
+ * That suite drives `createWiki({ root, env }).getContextPack()` through the SDK
+ * facade, so it reaches both oracle inputs: the live `vitest related` above returns it
+ * in the pair selection and not in the single one. It is an addition to the frozen
+ * oracle, not a loosening of it -- the list still names every file exactly, and the
+ * entry below that the core collapse removed stays out for the reason recorded here.
+ *
+ * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 24 BEFORE THAT BY `test/sdk/query-citation-env.test.ts`,
+ * whose `createWiki({ root, env }).query()` reaches both oracle inputs the same way.
  *
  * THE PAIR ORACLE HAD BEEN RE-FROZEN AT 23 BEFORE THAT BY `test/stack-authority-masquerade.test.ts`,
  * whose `createWiki({ root }).ingest()` and `.compile()` reach both oracle inputs the same way.
@@ -42,7 +45,7 @@
  *
  * THE DEPTH CONTRAST IS LOAD-BEARING. `transformRequest` records only a module's
  * own imports, so a single pass yields depth-1 closures and stops. The pair of
- * inputs selects 24 files while the single input selects 6 — those are the two
+ * inputs selects 25 files while the single input selects 6 — those are the two
  * frozen oracles below, i.e. the selections the real `vitest related` returned for
  * those inputs, not counts this file derives from the crawl it is testing. A
  * regression back to one pass cannot reach the second number, which is what the
@@ -86,7 +89,7 @@ const SINGLE_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
 ];
 
-/** Oracle input two, and the exactly-24 selection `vitest related` returned for it. */
+/** Oracle input two, and the exactly-25 selection `vitest related` returned for it. */
 const PAIR_SOURCES: readonly string[] = [
   "packages/wiki/src/index.ts",
   "packages/wiki/src/sdk/compiler-composition.ts",
@@ -102,6 +105,7 @@ const PAIR_TESTS: readonly string[] = [
   "test/query-publication-sdk-mcp.test.ts",
   "test/review-option-removal-entries.test.ts",
   "test/sdk/acceptance.test.ts",
+  "test/sdk/context-pack-env.test.ts",
   "test/sdk/core-composition.test.ts",
   "test/sdk/create-wiki-root.test.ts",
   "test/sdk/facade-env-threading.test.ts",
