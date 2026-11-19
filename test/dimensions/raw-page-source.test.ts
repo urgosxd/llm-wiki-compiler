@@ -16,20 +16,23 @@ import { createPageWriteSink } from "../../packages/wiki/src/dimensions/wiki/pag
 import type { KgPostgresHarness } from "../fixtures/kg-postgres.js";
 import { provisionStack } from "../fixtures/stack-harness.js";
 
+// This file has ONE suite, so its fixture lives at module scope: the hooks below are
+// per-test either way, and keeping them out of the `describe` body is what leaves each
+// case's assertions room under the function-size limit.
+let harness: KgPostgresHarness;
+let root: string;
+
+beforeEach(async () => {
+  harness = (await provisionStack("raw")).harness;
+  root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-raw-"));
+});
+
+afterEach(async () => {
+  await harness.cleanup();
+  await rm(root, { recursive: true, force: true });
+});
+
 describe("raw page source", () => {
-  let harness: KgPostgresHarness;
-  let root: string;
-
-  beforeEach(async () => {
-    harness = (await provisionStack("raw")).harness;
-    root = await mkdtemp(path.join(os.tmpdir(), "no-wiki-raw-"));
-  });
-
-  afterEach(async () => {
-    await harness.cleanup();
-    await rm(root, { recursive: true, force: true });
-  });
-
   it("collects concepts before queries, as the disk scan does", async () => {
     const sink = createPageWriteSink(harness.db, harness.stackId);
     await sink({ directory: "queries", slug: "q", body: "---\ntitle: Q\n---\n\nq\n" });
@@ -56,6 +59,22 @@ describe("raw page source", () => {
       orphaned: false,
     });
     expect(page?.body).toBe("\nc\n");
+  });
+
+  it("carries a row's aliases into frontmatter, omitting the key when it has none", async () => {
+    // Two readers resolve identity through `frontmatter.aliases`: the viewer's bare-slug
+    // fallback (`viewer/collect.ts`) and the answer-citation index
+    // (`citations/answer-index.ts`). The file scan has always read them out of the
+    // frontmatter block, so the row scan must serve the same key -- and omit it, not
+    // report `[]`, when a row declares none.
+    const sink = createPageWriteSink(harness.db, harness.stackId);
+    await sink({ directory: "concepts", slug: "a", body: "---\ntitle: A\naliases: [x, y]\n---\n\na\n" });
+    await sink({ directory: "concepts", slug: "p", body: "---\ntitle: P\n---\n\np\n" });
+
+    const pages = await createRawPageSource(harness.db, harness.stackId, root).collect();
+
+    expect(pages.find((p) => p.slug === "a")?.frontmatter.aliases).toEqual(["x", "y"]);
+    expect(pages.find((p) => p.slug === "p")?.frontmatter).not.toHaveProperty("aliases");
   });
 
   it("marks an orphaned row as orphaned, matching the file flag", async () => {
