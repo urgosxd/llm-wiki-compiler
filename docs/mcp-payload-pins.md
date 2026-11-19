@@ -36,11 +36,19 @@ confident wrong number on every result.
 
 When `read_page` reports the links a page carries, the source is the page BODY, parsed
 by `extractWikilinkTargets` (`packages/wiki/src/wiki/collect.ts`) — the same extractor
-behind `Page.links`. The row store selects `wiki.pages.links` (`text[]`), which now holds
-a normalized wikilink target — a bare slug, or a qualified `<namespace>/<slug>` id when
-the body named one that way — and `Page.links` is built from the body, so exposing
-labelled refs costs no extra query. The wire `links[].slug` of `read_page` is projected
-to the bare slug, because that tool takes a slug rather than a page id.
+behind `Page.links`. The row store selects `wiki.pages.links` (`text[]`), which holds a
+normalized wikilink target — a bare slug, or a qualified `<namespace>/<slug>` id when
+the body named one that way. That is the column's settled shape and it is
+AUTHORITATIVE: the value is a page reference, not a page name, and a bare slug cannot
+be one because `primary key (stack_id, page_directory, slug)`
+(`packages/wiki/src/dimensions/wiki/schema.sql:106`) lets `concepts/x` and `queries/x`
+coexist. `Page.links` is built from the body, so exposing labelled refs costs no extra
+query, and the export writers resolve every target against the `(page_directory, slug)`
+pair (`packages/wiki/src/export/link-targets.ts`) instead of against a set of slugs. The
+wire `links[].slug` of `read_page` is projected to the bare slug, because that tool
+takes a slug rather than a page id — the one projection that DISCARDS the namespace, so
+under a collision it names whichever page `read_page` finds first
+(`odd/tasks/query-wiki-citation-targets.md`, `L10`).
 
 `wiki.curated_links` is **not** that source and is the wrong one for a per-page
 outgoing-link view. It is the curated overlay: rows scoped by `source_page_id` and

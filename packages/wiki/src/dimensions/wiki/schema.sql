@@ -87,7 +87,7 @@ create table if not exists wiki.pages (
     source_identity text       null,
     summary        text        not null default '',
     tags           text[]      not null default '{}',
-    links          text[]      not null default '{}',
+    links          text[]      not null default '{}', -- normalized wikilink targets: a bare slug, or `<namespace>/<slug>`; a bare slug is NOT a page reference, because the primary key below is `(stack_id, page_directory, slug)`
     body           text        not null default '',
     orphaned       boolean     not null default false,
     archived       boolean     not null default false,
