@@ -28,7 +28,7 @@ Restores answer-citation resolution on row-backed Stacks: `collectAnswerCitation
 
 - [x] T1 — feature document. S1-S10. Parent (Lead) authors, worker writes. Commit 1 `f93096b4b1d63adad91c2d7c06e6ceb4b92ce027` (`docs(odd): open the row-backed citation index feature`).
 - [x] T2 — thread the page-source seam into the citation index and make an unreadable index an error; RED then GREEN. S1, S3, S4, S5, S6, S7. Commit 2 (`fix(citations): read the citation index through the page-source seam`) — its SHA cannot be written inside its own diff; it is reported in the handoff and in `git log`.
-- [ ] T3 — disk-versus-rows differential on identical content. S8. Commit 3.
+- [x] T3 — disk-versus-rows differential on identical content. S8, S2. Commit 3 (`test(citations): pin disk and row citation verdicts to one answer`) — its SHA cannot be written inside its own diff; it is reported in the handoff and in `git log`.
 - [ ] T4 — independent verification and gates. S9, S10.
 
 ## Log
@@ -185,3 +185,129 @@ deployment's queue. Pre-existing, unchanged by T2, out of this task's scope.
 **S8 is T3's, not claimed here.** No disk-versus-rows differential was run; these cases
 prove the row half only. S10 stands: nothing here claims the human's production citations
 resolve.
+
+### L3 — T3 evidence: the differential, and the seam as measured (covers S8, S2)
+
+**New file:** `test/answer-citation-source-parity.test.ts` (159 lines, 2 tests). It adds no
+production code. `Risk: none` — the only change outside the new test file is this document,
+and the differential proves parity.
+
+**One fixture, materialized twice.** Three pages across BOTH directories —
+`concepts/alpha`, `concepts/vector-db` (frontmatter `aliases: [Vector Database]`),
+`queries/beta` — plus one cited target that exists nowhere (`Gone`). Answer under test:
+`Grounded in [[Alpha]], [[Vector Database]], [[beta]] and in [[Gone]].`
+
+- DISK half: real `.md` files with frontmatter under a `realpath`'d temp root's
+  `wiki/concepts` and `wiki/queries`, driven through the seam in FILE mode by passing
+  `{ kind: "file", reason: "no-database-configured" }` as `withRawPageSource`'s 4th
+  argument. The authority is explicit because the runner seeds a database URL into every
+  worker and `settledAuthority` (`stack-authority.ts:134`) only returns the file mode when
+  no database is configured; the supplied authority short-circuits `authorityFor`
+  (`page-source-seam.ts:76-81`) before any resolution, so nothing in the process
+  environment is switched off and the row half keeps its database.
+- ROW half: the SAME pages as `wiki.pages` rows for the harness Stack, with a temp root
+  that has NO `wiki/` content. The absence is asserted, not assumed:
+  `readdir(<rowRoot>/wiki)` rejects with `ENOENT` inside the case.
+
+**The compared reports, observed this run — IDENTICAL.**
+
+```json
+{ "version": 1, "citations": [
+  { "target": "alpha",           "status": "resolved", "pageId": "concepts/alpha" },
+  { "target": "vector-database", "status": "resolved", "pageId": "concepts/vector-db" },
+  { "target": "beta",            "status": "resolved", "pageId": "queries/beta" },
+  { "target": "gone",            "status": "broken" }
+] }
+```
+
+The disk report was compared to THAT literal and the row report to the disk report with
+`toEqual`, so the two sources have to agree AND each has to be right. Non-vacuity is
+pinned separately: the citation count is `> 0`, the statuses must contain `resolved` and
+`broken`, and three resolved `pageId`s are named — an empty report or an all-broken one
+fails on the literal before any comparison. NO DIVERGENCE was found; there is no second
+bug to explain and nothing was adjusted to make the comparison pass.
+
+**The comparison discriminates (mutation check, not committed).** Removing the row half's
+`aliases: [...page.aliases]` line made BOTH cases fail for the reason S8 exists:
+
+```
+ FAIL  test/answer-citation-source-parity.test.ts > produces the same citation verdicts from disk and from rows
+-       "pageId": "concepts/vector-db",
+-       "status": "resolved",
++       "status": "broken",
+        "target": "vector-database",
+```
+
+The alias citation is the entry that breaks, on the axis T2 changed (`toRaw`'s frontmatter
+aliases, `page-scan-source.ts:290-300`). The file was restored from a `/tmp` copy and the
+suite re-run green; the mutation is not part of the change.
+
+**Harness reachability.** `withRowsStack` is NOT used: it returns silently without a
+database (`test/fixtures/rows-only-stack.ts:54`). `requireDatabase` asserts
+`harness.reachable` at the top of every case with the message "the disk-versus-row
+differential is void". Fixtures are imported by relative path; no `@repo/kg` import was
+added from `test/**`.
+
+**S2 — which source each deployment shape uses, verified this session (`path:line`).**
+
+1. The value: `StackAuthority` is `{ kind: "stack", stackId }` |
+   `{ kind: "file", reason }` (`packages/wiki/src/dimensions/stack-authority.ts:69-71`).
+2. THE decision point: `settledAuthority` (`stack-authority.ts:128-136`) — a non-blank
+   caller id is a Stack (`:133`); otherwise `isDatabaseConfigured(env)` (`activation.ts:168-170`,
+   non-blank `AKS_DATABASE_URL`) being FALSE is the only route to the file mode (`:134`);
+   otherwise the resolver is asked and refuses when it can name none
+   (`resolveStackAuthority`, `:149-157`). So the discriminating fact between a row-backed and
+   a file-backed deployment is exactly "is a database configured", which is why the
+   human's database-backed production runs are the row-backed shape.
+3. The seam's branch, once, for every source shape: `withResolvedBackend`
+   (`page-source-seam.ts:113-129`) branches on `resolved.kind` at `:122` — `file` runs the
+   caller's body with `undefined`; `stack` opens a dimensions handle and runs it with the row
+   source. For citations that row source is `createRawPageSource(db, stack.stackId, root)`
+   (`page-source-seam.ts:269`, built only here).
+4. The read: `collectAnswerCitationIndex` (`answer-index.ts:142-156`) branches EXPLICITLY on
+   the `source` it was handed — `:146` row path via `listStoredPagesUnfiltered`
+   (`page-store.ts:257`); `:151-155` the disk walk, `collectRetainedDirectory`
+   (`answer-index.ts:64-82`) called once per directory with `CONCEPTS_DIR`/`QUERIES_DIR`
+   (`constants.ts:329-330`). No fallback in either direction.
+5. Production callers hand in what the seam resolved: `commands/query.ts:230-231`
+   (`options.env ?? process.env`) and `commands/query-publication.ts:85-86` (the save path's
+   own `env`, reaching `validateCitationPublication`). A row-backed deployment therefore
+   reads rows, a file-backed one reads `wiki/`.
+
+**Blast radius of T2's `toRaw` alias change — answer: NO existing test asserts the ABSENCE
+of aliases for a row-backed `ViewerPage` or an OKF export.** Evidence:
+
+- `grep -rn "aliases" --include=*.test.ts test/ | grep -E "toBeUndefined|toEqual\(\[\]\)"`
+  returns six sites, none row-backed: `test/bridge-export-contract.test.ts:130` (root built
+  with `makeTempRoot` + `writePage(root, "wiki/concepts", …)`, file-backed),
+  `test/compiler/identity-stage-snapshot.test.ts:66` (same, file-backed),
+  `test/okf-map.test.ts:50` (an extension snapshot, never a `RawWikiPage`),
+  `test/obsidian.test.ts:61,67` (title-derived frontmatter, not page aliases),
+  `test/dimensions/db-parity-migration.test.ts:573` (a column default, no collector).
+- `test/dimensions/raw-page-source.test.ts` (the row-source suite) asserts `parseStatus`,
+  order and body, never aliases — so it pins neither presence nor absence.
+- In the other direction, `test/dimensions/row-store-of-record.test.ts:167-170` asserts
+  aliases ARE served from rows, which T2's change is consistent with.
+
+**Named gap (not this task's to close).** With no absence assertion left to break, no test
+other than the citation suites pins the NEW row-backed viewer/export alias behaviour that
+`toRaw` now produces. That is a coverage gap in T2's shared-code change, reported here
+rather than fixed inside a differential task.
+
+**Scope note on the pending half.** Both roots have no `.llmwiki/candidates`, so `pending`
+is empty on both sides. That half is read from the caller's root by `listCandidates`
+(`answer-index.ts:113-121`) and does not touch pages, so it is not part of the
+disk-versus-rows axis; T2's L2 already names the deployment-scoped queue as a separate,
+pre-existing gap.
+
+**Gates, this run.** `pnpm exec vitest run test/answer-citation-source-parity.test.ts` →
+`Test Files 1 passed (1)`, `Tests 2 passed (2)`, nothing skipped;
+`pnpm exec tsc --noEmit` → no output (clean); `pnpm run typecheck:tests` →
+`1756 files checked; 237 baseline diagnostics in 85 files; no regression`;
+`pnpm run lint` → `1838 files scanned; 556 baseline violations … no regression`. The test
+suite's own database server is the container that run created; the leftover
+`crazy_heyrovsky` on `:5434` was neither adopted nor touched.
+
+**S10 stands, unchanged.** This differential proves disk and rows agree on ONE fixture in a
+scratch Stack. It does not show the human's production citations resolving, and no such
+claim is made here.
