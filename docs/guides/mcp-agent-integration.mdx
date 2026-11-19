@@ -92,7 +92,7 @@ This guide walks you through starting the server, wiring it into Claude Desktop 
 
 ### Tools
 
-The server exposes fourteen tools. Every tool takes a required `stackId` naming the Stack it reads or writes: there is no default Stack and no fallback, so a call that omits the argument is refused at validation instead of inheriting a Stack from the server's environment. `list_stacks` is the single exemption, marked in the table below. Read-only tools work without provider credentials; tools that invoke the LLM pipeline require a configured provider in the `env` block.
+The server exposes seventeen tools: the wiki's fourteen below, plus three that read the Stack's knowledge graph (`query_stack`, `traverse_stack` and `get_entities`), documented in the next section. Every tool takes a required `stackId` naming the Stack it reads or writes: there is no default Stack and no fallback, so a call that omits the argument is refused at validation instead of inheriting a Stack from the server's environment. `list_stacks` is the single exemption, marked in the table below. Read-only tools work without provider credentials; tools that invoke the LLM pipeline require a configured provider in the `env` block.
 
 | Tool | What it does | Credentials required |
 |------|--------------|:--------------------:|
@@ -116,6 +116,28 @@ The server exposes fourteen tools. Every tool takes a required `stackId` naming 
 **`get_context_pack` vs `query_wiki`:** these tools serve different purposes. `get_context_pack` *packages evidence* - it assembles a structured JSON envelope of relevant pages, semantic chunks, and citations that the agent uses for its own reasoning. `query_wiki` *generates an answer* - it calls the LLM and returns prose. Use `get_context_pack` when the agent needs grounded source material to reason over; use `query_wiki` when you want a finished answer.
 
 `query_wiki` has no review option. Its existing no-save path returns the answer and advisory citations without publication checks. `save: true` is governed by the direct-save profile gate alone - there is no review policy to read, and a `review` key in project config is refused at load.
+
+### Knowledge graph tools and the ontology's two classes
+
+Three tools on this surface read the Stack's knowledge graph: `query_stack`, `traverse_stack` and `get_entities`. Every entity and edge they can return carries an ontology verdict - `accepted` or `rejected` - and **all three return both classes by default**. A refused row is not a discarded candidate: the Stack's ontology turned the triplet away, and the row keeps its class, the classifier's own reason (one of `UNKNOWN_ENTITY_TYPE`, `UNKNOWN_RELATIONSHIP_TYPE`, `SUBJECT_TYPE_NOT_IN_DOMAIN` or `OBJECT_TYPE_NOT_IN_RANGE` - never the word `rejected`, which is the class and not a reason), and the type the ontology refused. Whether any refused row exists at all depends on the writer that ingested the document; [Open knowledge classification in the kg dimension](/concepts/kg-open-classification) covers the model.
+
+Where the class appears depends on what the response object can carry. An entity publishes it inside `properties.ontology_classification`, as `verdict`, `reason` and `offending_type`. A traversal step carries `ontology_classification` beside the edge it describes. The rendered MCP text marks a refused item `REJECTED`, so it is never presented as a fact the ontology vouches for. A relationship inside an AKS payload has nowhere to put it - that object is closed - so `query_stack` resolves the class of a refused edge from the Stack's graph projection instead, and discloses when that resolution was incomplete.
+
+| Tool | `accepted_only` default | What a read returns |
+|------|-------------------------|---------------------|
+| `query_stack` | `false` | both classes |
+| `traverse_stack` | `false` | both classes, and it walks across a refused edge |
+| `get_entities` | `false` | both classes |
+
+`accepted_only: true` narrows any of the three to the accepted class, and it changes the answer rather than the graph: the refused rows stay stored. Omitting the argument is the wide default, not a refusal.
+
+**A non-boolean is refused by the tool handler.** `accepted_only` is a boolean, and the advertised input schema is advice rather than enforcement - a model that passes the string `"false"` would have it read as true. A present value that is not a boolean is therefore refused before any request is built, with `Error: 'accepted_only' must be a boolean.`, never silently coerced.
+
+**`list_stacks` does not take the argument, and does not need it.** This surface answers `list_stacks` with the wiki's implementation, and what it lists are Stacks - a declaration plus its own metadata - not graph rows. The verdicts live per row in the graph's entity and relationship tables, so a Stack listing has no class to narrow: there is nothing on that surface for the argument to exclude. It is absent rather than accepted and ignored.
+
+A deployment started with `--no-graph` mounts no graph surface and registers these three tools not at all, so a client on such an image sees the wiki's fourteen names and none of these.
+
+If you also read the graph over HTTP, one surface defaults the other way: `GET /aks/v1/export` ships `accepted_only` set to `true`. That is a deliberate decision rather than an inconsistency, because a bundle is validated against a contract that admits no class marker and so cannot tell its reader which rows were refused; returning both classes by default would hand unmarked refused rows to the consumer least able to notice them. `?accepted_only=false` opts into them. Every other graph surface, this MCP one included, returns both classes by default.
 
 ### MCP resources
 
