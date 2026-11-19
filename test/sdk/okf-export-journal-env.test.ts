@@ -20,7 +20,8 @@
  * journal descriptions and the assertion reads them back out of the written bundle: B's
  * line present (a fix that drops the header cannot pass) and A's line absent (no ambient
  * header survives). The two entries carry different dates, so a failure shows which
- * Stack's journal the bundle was assembled from.
+ * Stack's journal the bundle was assembled from -- and the date half has its own case, so
+ * the heading and the text under it are each witnessed rather than assumed.
  *
  * Default `TESTCONTAINERS_REUSE_ENABLE=false`: a reused container carrying another
  * commit's schema is refused rather than trusted, and no suite here looks green with no
@@ -35,6 +36,7 @@ import {
   handleOnAmbientStack,
   handleOnBoundStack,
 } from "./two-stack-env.js";
+import type { OkfExportReport } from "../../packages/wiki/src/export/okf/run.js";
 
 /** The journal line only the Stack the PROCESS serves holds. */
 const AMBIENT_JOURNAL = "ingested the ambient stack's only source";
@@ -42,9 +44,15 @@ const AMBIENT_JOURNAL = "ingested the ambient stack's only source";
 /** The journal line only the Stack the HANDLE names holds. */
 const BOUND_JOURNAL = "ingested the bound stack's only source";
 
+/** The day only the Stack the HANDLE names journalled in. */
+const BOUND_JOURNAL_AT = new Date("2024-03-02T10:00:00Z");
+
+/** The day only the Stack the PROCESS serves journalled in; a different day keeps a failure readable. */
+const AMBIENT_JOURNAL_AT = new Date("2024-03-01T10:00:00Z");
+
 const two = await createTwoStacks("sdk-okf-journal-env");
-await appendStackJournalEntry(two.ambient, AMBIENT_JOURNAL, new Date("2024-03-01T10:00:00Z"));
-await appendStackJournalEntry(two.bound, BOUND_JOURNAL, new Date("2024-03-02T10:00:00Z"));
+await appendStackJournalEntry(two.ambient, AMBIENT_JOURNAL, AMBIENT_JOURNAL_AT);
+await appendStackJournalEntry(two.bound, BOUND_JOURNAL, BOUND_JOURNAL_AT);
 
 afterAll(async () => {
   await two.release();
@@ -57,9 +65,16 @@ async function exportedLog(writtenPaths: string[]): Promise<string> {
   return readFile(logPath, "utf8");
 }
 
+/** The `## <YYYY-MM-DD>` heading an OKF `log.md` gives one journal day. */
+function journalDay(at: Date): string {
+  return `## ${at.toISOString().slice(0, 10)}`;
+}
+
 it("builds log.md from the journal of the Stack the handle names", async () => {
   const wiki = await handleOnBoundStack(two);
-  const report = await wiki.exportOkf({ out: path.join(two.root, "bundle-journal") });
+  // The committed facade contract reports `Promise<unknown>` for this door; the shape read
+  // below is `runOkfExport`'s, so it is narrowed here rather than in the contract.
+  const report = (await wiki.exportOkf({ out: path.join(two.root, "bundle-journal") })) as OkfExportReport;
   const log = await exportedLog(report.writtenPaths);
 
   expect(log).toContain(BOUND_JOURNAL);
@@ -70,9 +85,22 @@ it("builds log.md from the journal of the Stack the handle names", async () => {
 // environment addresses the AMBIENT Stack, so its `log.md` is the ambient journal's.
 it("still builds log.md from the ambient journal when the handle names no environment", async () => {
   const wiki = handleOnAmbientStack(two);
-  const report = await wiki.exportOkf({ out: path.join(two.root, "bundle-journal-ambient") });
+  const report = (await wiki.exportOkf({ out: path.join(two.root, "bundle-journal-ambient") })) as OkfExportReport;
   const log = await exportedLog(report.writtenPaths);
 
   expect(log).toContain(AMBIENT_JOURNAL);
   expect(log).not.toContain(BOUND_JOURNAL);
+}, 60_000);
+
+// The same header carries a DATE, and the two Stacks journalled on different days, so the
+// heading names which Stack's journal the bundle was assembled from. Reverting
+// `export/okf/bundle.ts:138` to `process.env` shipped `## 2024-03-01`, the ambient day,
+// where this bundle's own day was expected.
+it("dates log.md from the journal of the Stack the handle names", async () => {
+  const wiki = await handleOnBoundStack(two);
+  const report = (await wiki.exportOkf({ out: path.join(two.root, "bundle-journal-dated") })) as OkfExportReport;
+  const log = await exportedLog(report.writtenPaths);
+
+  expect(log).toContain(journalDay(BOUND_JOURNAL_AT));
+  expect(log).not.toContain(journalDay(AMBIENT_JOURNAL_AT));
 }, 60_000);

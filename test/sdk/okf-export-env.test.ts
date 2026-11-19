@@ -62,7 +62,11 @@ async function exportedDocs(report: OkfExportReport): Promise<{ rel: string; tex
 it("exports the pages of the Stack the handle names, never the ambient one", async () => {
   // The process serves Stack A; the handle names Stack B; the root has no `wiki/` tree.
   const wiki = await handleOnBoundStack(two);
-  const docs = await exportedDocs(await wiki.exportOkf({ out: path.join(two.root, "bundle") }));
+  // The committed facade contract reports `Promise<unknown>` for this door; the shape the
+  // assertions read is `runOkfExport`'s, so it is narrowed here rather than in the contract.
+  // `test/sdk/okf-import-env.test.ts` and its two siblings narrow the same way.
+  const report = (await wiki.exportOkf({ out: path.join(two.root, "bundle") })) as OkfExportReport;
+  const docs = await exportedDocs(report);
 
   // Positive: the handle's own page is one of the three documents. Negative: those
   // three names are the whole bundle, so no ambient page is in it.
@@ -80,7 +84,8 @@ it("still exports the ambient Stack when the handle names no environment", async
   bindProcessTo(two.ambient);
 
   const wiki = createWiki({ root: two.root });
-  const docs = await exportedDocs(await wiki.exportOkf({ out: path.join(two.root, "bundle-default") }));
+  const report = (await wiki.exportOkf({ out: path.join(two.root, "bundle-default") })) as OkfExportReport;
+  const docs = await exportedDocs(report);
 
   expect(docs.map(({ rel }) => rel)).toEqual(["concepts/alpha-a.md", "index.md", "log.md"]);
 }, 60_000);
