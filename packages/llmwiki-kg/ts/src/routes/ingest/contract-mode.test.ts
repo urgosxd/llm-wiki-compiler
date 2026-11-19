@@ -221,11 +221,20 @@ describe.skipIf(skipReason !== false)("the ingest endpoint offers both contracts
       .post(ingestUrl(stackId, documentId, "?ontology_contract=closed"))
       .expect(422);
 
-    const detail = response.body.detail as Array<{ type: string; loc: string[]; input: unknown }>;
+    const detail = response.body.detail as Array<{
+      type: string;
+      loc: string[];
+      input: unknown;
+      ctx: { expected: string };
+    }>;
     expect(detail).toHaveLength(1);
     expect(detail[0]?.loc).toEqual(["query", "ontology_contract"]);
     expect(detail[0]?.type).toBe("literal_error");
     expect(detail[0]?.input).toBe("closed");
+    // The refusal TEXT, not only its type: `msg` is `Input should be ${expected}` and
+    // `expected` is the quoted list the caller reads, so a fourth contract value, or a
+    // value dropped from the enum, changes this string and nothing else here.
+    expect(detail[0]?.ctx.expected).toBe("'open', 'strict' or 'persist'");
   });
 
   it("still honours the description flag it shares the query with", async () => {
