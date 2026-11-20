@@ -34,40 +34,44 @@ S12. `packages/wiki/src/commands/export.ts:213`'s hardcoded `process.env` inside
 
 S13. The shared two-Stack harness (`test/sdk/two-stack-env.ts`) must THROW when no database reached the worker, and that refusal is itself pinned so it stays durable rather than merely observed once: a suite body that reached its assertions with no database would prove nothing, and a void cross-tenant proof reported as passed is worse than a red one.
 
-### Facade enumeration (S10)
+### Facade enumeration (S10) — baseline, measured at `7411a198`
 
-The facade is the object returned by `createWikiCoreAtRoot` (`packages/wiki/src/sdk/core.ts:84-243`); its contract is `WikiCore` (`packages/wiki/src/sdk/core-types.ts:180`), 17 exported keys.
+The facade is the object returned by `createWikiCoreAtRoot` (`packages/wiki/src/sdk/core.ts:75`, object literal `:88-268` at the branch tip); its contract is `WikiCore` (`packages/wiki/src/sdk/core-types.ts:180`), 17 exported keys.
 
-| # | Key | `env` at the door | Verdict |
-|---|-----|-------------------|---------|
-| 1 | `ingest` | forwarded, `core.ts:96-97` → `ingestSource(…, env, …)` | clean |
-| 2 | `ingestText` | forwarded, `core.ts:99-100` → `ingestTextSource(root, input, env, …)` | clean |
-| 3 | `compile` | forwarded, `core.ts:116` → `compileAndReport(root, { ...opts, env, dimensionsPort })` | clean |
-| 4 | `search` | forwarded, `core.ts:132-133` → `withEmbeddingStoreSource(env, …)` + `withRegistrySource(env, …)` | clean |
-| 5 | `query` | forwarded, `core.ts:159` → `generateAnswer(root, question, { ...opts, registrySource, env })` | clean (fixed by `4f00ac37`) |
-| 6 | `getPage` | forwarded, `core.ts:167` → `withPageSource(env, …)` | clean |
-| 7 | `listPages` | forwarded, `core.ts:170` → `withPageSource(env, …)` | clean |
-| 8 | `listSources` | not threaded, `core.ts:172`; `listSources` (`packages/wiki/src/sources/store.ts:23`) takes no environment and reads the on-disk sources tree | does not touch Stack |
-| 9 | `getSource` | not threaded, `core.ts:182`; takes no environment, reads text through `resolveSourcesDir` → `confinedRegularFile` → `readFile` | does not touch Stack |
-| 10 | `status` | forwarded, `core.ts:192-194` → `withPageScan(env, …)`, `withSourceDocuments(env, …)`, `collectStatus(…, env)` | clean |
-| 11 | `lint` | forwarded, `core.ts:205` → `lint(root, env)` | clean |
-| 12 | `lintByTier` | forwarded, `core.ts:207` → `lintByTier(root, env)` | clean |
-| 13 | `getContextPack` | absent, `core.ts:212-222` — `buildContextPack({ root, prompt, budget?, depth?, topPages?, topChunks? })` | **leaks** (S3) |
-| 14 | `exportJson` | absent, `core.ts:224` — `exportJson(root, opts)` | **leaks** (S3) |
-| 15 | `runEval` | not threaded, `core.ts:227-231`; `runEval` (`packages/wiki/src/eval/index.ts:57`) takes no environment | does not touch Stack |
-| 16 | `exportOkf` | absent, `core.ts:233` — `runOkfExport(root, opts)` | **leaks** (S3) |
-| 17 | `importOkf` | absent, `core.ts:235` — `runOkfImport(root, dir, opts)` | **leaks** (S3) |
+**The three baseline columns are the historical finding, measured on `7411a198` before any fix, and they are left as measured.** A reader checking the tree at the branch tip will NOT find four of them: the `env` column's "absent" and the verdict's "leaks" describe the defect this feature closes, not the current code. The last column is that current state, re-measured at `f0285234`.
 
-No exported key other than these four leaks, so the fix stays at four doors and no detection widening is required.
+| # | Key | `env` at the door (baseline `7411a198`) | Baseline verdict | Current state at `f0285234` |
+|---|-----|-------------------|------------------|-----------------------------|
+| 1 | `ingest` | forwarded, `core.ts:96-97` → `ingestSource(…, env, …)` | clean | unchanged, `core.ts:96-97` |
+| 2 | `ingestText` | forwarded, `core.ts:99-100` → `ingestTextSource(root, input, env, …)` | clean | unchanged, `core.ts:99-100` |
+| 3 | `compile` | forwarded, `core.ts:116` → `compileAndReport(root, { ...opts, env, dimensionsPort })` | clean | unchanged, `core.ts:116` |
+| 4 | `search` | forwarded, `core.ts:132-133` → `withEmbeddingStoreSource(env, …)` + `withRegistrySource(env, …)` | clean | unchanged, `core.ts:132-133` |
+| 5 | `query` | forwarded, `core.ts:159` → `generateAnswer(root, question, { ...opts, registrySource, env })` | clean (fixed by `4f00ac37`) | unchanged, `core.ts:159` |
+| 6 | `getPage` | forwarded, `core.ts:167` → `withPageSource(env, …)` | clean | unchanged, `core.ts:167` |
+| 7 | `listPages` | forwarded, `core.ts:170` → `withPageSource(env, …)` | clean | unchanged, `core.ts:170` |
+| 8 | `listSources` | not threaded, `core.ts:172`; `listSources` (`packages/wiki/src/sources/store.ts:23`) takes no environment and reads the on-disk sources tree | does not touch Stack | unchanged, `core.ts:172` — still resolves no Stack |
+| 9 | `getSource` | not threaded, `core.ts:182`; takes no environment, reads text through `resolveSourcesDir` → `confinedRegularFile` → `readFile` | does not touch Stack | unchanged, `core.ts:182` — still resolves no Stack |
+| 10 | `status` | forwarded, `core.ts:192-194` → `withPageScan(env, …)`, `withSourceDocuments(env, …)`, `collectStatus(…, env)` | clean | unchanged, `core.ts:192-194` |
+| 11 | `lint` | forwarded, `core.ts:205` → `lint(root, env)` | clean | unchanged, `core.ts:205` |
+| 12 | `lintByTier` | forwarded, `core.ts:207` → `lintByTier(root, env)` | clean | unchanged, `core.ts:207` |
+| 13 | `getContextPack` | absent, `core.ts:212-222` — `buildContextPack({ root, prompt, budget?, depth?, topPages?, topChunks? })` | **leaks** (S3) | **fixed** — forward at `core.ts:224` (door opens `core.ts:219`) |
+| 14 | `exportJson` | absent, `core.ts:224` — `exportJson(root, opts)` | **leaks** (S3) | **fixed** — forward at `core.ts:239` |
+| 15 | `runEval` | not threaded, `core.ts:227-231`; `runEval` (`packages/wiki/src/eval/index.ts:57`) takes no environment | does not touch Stack | shifted to `core.ts:242-247` by the comments the other doors gained; still resolves no Stack |
+| 16 | `exportOkf` | absent, `core.ts:233` — `runOkfExport(root, opts)` | **leaks** (S3) | **fixed** — forward at `core.ts:253`; the journal header thread landed in `export/okf/bundle.ts` (S11, `readJournalMarkdown` at `bundle.ts:137`) |
+| 17 | `importOkf` | absent, `core.ts:235` — `runOkfImport(root, dir, opts)` | **leaks** (S3) | **fixed** — forward at `core.ts:260` |
+
+No exported key other than these four leaked, so the fix stayed at four doors plus the one journal-header thread inside `exportOkf`, and no detection widening was required. The three rows that never touched Stack are untouched on purpose and are not a residual: `getSource` (`core.ts:182`), `listSources` (`core.ts:172`) and `runEval` (`core.ts:242-247`) still resolve no Stack, and a door that resolves no Stack cannot leak one — there is no env seam for a caller's argument to reach, so an unforwarded argument would change no answer while implying a tenant the door never consults.
 
 ## Tasks
 
-T1. Feature document and the facade enumeration — S1, S10 — route: gentle-ai-worker — commit: this commit (full SHA returned in the task handoff).
-T2. `getContextPack` forward plus its Stack-versus-ambient proof and revert proof — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: pending.
-T3. `exportOkf` and `importOkf` forwards plus proofs and revert proofs (coherent pair) — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: pending.
-T4. `exportJson` forward, plus the optional `exportJson` options field, plus proof and revert proof — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: pending.
-T5. Independent verification of all four proofs and the gate run — S4, S5, S6, S10 — route: gentle-ai-verify — commit: pending.
-T6. The OKF journal header thread, its Stack-versus-ambient proof and revert proof, the S6 durable guard, and the S11/S12/S13 record — Specs S11, S12, S13, S4, S5, S7 — route: gentle-ai-worker — commit: pending.
+T1. Feature document and the facade enumeration — S1, S10 — route: gentle-ai-worker — commit: `f9868968a689a7bc3b3a7d9c71f598d7edde5943` — done.
+T2. `getContextPack` forward plus its Stack-versus-ambient proof and revert proof — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: `aa1344c221b6891525874d76d3dd49504baebeec` — done.
+T3. `exportOkf` and `importOkf` forwards plus proofs and revert proofs (coherent pair) — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: `a6174eaab5f4f33d9b9bd37797e915b55ad28f51` — done.
+T4. `exportJson` forward, plus the optional `exportJson` options field, plus proof and revert proof — S1, S3, S4, S5, S7 — route: gentle-ai-worker — commit: `fe1782f893ad5b4ab1a7fac36efa77bc17d2979e` — done.
+T5. Independent verification of all four proofs and the gate run — S4, S5, S6, S10 — route: gentle-ai-verify — commit: none (verification only; no source change) — evidence: L6 — done.
+T6. The OKF journal header thread, its Stack-versus-ambient proof and revert proof, the S6 durable guard, and the S11/S12/S13 record — Specs S11, S12, S13, S4, S5, S7 — route: gentle-ai-worker — commits: `43daab8960d476e1cf280c2622045bdd36993479` (the S11/S12/S13 document record), `ccad156d431d01d1a2cbc215aa04531c64deaf85` (the durable no-database guard), `c5c98a2a2f081910011dda6f4f78b4667e7e9e19` (the journal door itself) — done.
+
+Also on the branch, closing verification's finding rather than a task of its own: `f0285234cfa2c1ac50dc995be09109cb08f3e9b6` is the type-narrowing and journal-date repair that made `pnpm run typecheck:tests` green (see L6).
 
 ## Log
 
@@ -126,3 +130,28 @@ L5. The Manager's ruling for T6, verbatim:
 > **Log it as a correction of my brief, not as your finding** — referring to the brief naming `packages/api/src/sdk/core.ts`, which does not exist; the facade is `packages/wiki/src/sdk/core.ts` and the brief's line numbers were right.
 
 Both rulings are recorded as S11 (the door), S12 (why `runExport` stays as it is) and S13 (the durable guard), and the brief correction as the reframed L2.
+
+L6. Verification evidence for the closed feature, as measured at `f0285234cfa2c1ac50dc995be09109cb08f3e9b6` — T5's record, and T5 changes no code, so its evidence is this entry. It states what was observed, not that every reachable path was exercised; the limits are named at the end.
+
+**Five revert proofs**, independently re-observed by a read-only verifier in a scratch copy checked out at `f0285234`. Each removes exactly one forwarded member and each then fails with the AMBIENT Stack's own data where the handle's was expected — the `alpha-a resolved / alpha-b broken` shape `4f00ac37` established for `query`:
+
+- `getContextPack` — remove `env` at `core.ts:224`: the pack built from a Stack B handle ranks the ambient Stack's page, `concepts/alpha-a` where `concepts/alpha-b` was expected (`test/sdk/context-pack-env.test.ts`).
+- `exportJson` — remove `env` at `core.ts:239`: the JSON export from a Stack B handle describes the ambient corpus (`test/sdk/export-json-env.test.ts`).
+- `exportOkf` — remove `env` at `core.ts:253`: the bundle from a Stack B handle writes the ambient page, `concepts/alpha-a.md` (`test/sdk/okf-export-env.test.ts`).
+- `importOkf` — remove `env` at `core.ts:260`: the imported page lands in the ambient Stack, so B is missing the page it just imported while A gained it (`test/sdk/okf-import-env.test.ts`).
+- OKF journal header — revert `readJournalMarkdown`'s environment to the hardcoded `process.env` (`export/okf/bundle.ts:138` at this HEAD; `:129` on the baseline `7411a198`): the written `log.md` carries the ambient heading `## 2024-03-01` where the handle's `## 2024-03-02` was expected (`test/sdk/okf-export-journal-env.test.ts`).
+
+The pre-existing `query` pin was re-observed rejecting too, after its refactor onto the shared two-Stack harness (`test/sdk/two-stack-env.ts`): that diff moved the fixture and changed no `expect(...)` (`test/sdk/query-citation-env.test.ts`).
+
+**Gate of record, run at `f0285234`:**
+
+- `turbo run test --filter=//` — exit 0, `Test Files 959 passed | 5 skipped (964)`, `Tests 6951 passed | 12 skipped (6963)`, `Tasks: 1 successful`, `Cached: 0 cached`.
+- All twelve skips are pre-existing, in files this branch never touched: `vendor-contract` (7, no `TYPESAFE_API_KEY`, expected), `pages-gateway` (2), `ingest-gateway` (1), `aks-gateway` (1), `hatch-worker-env-probe` (1). Branch-introduced skips: zero.
+- Static gates at the same HEAD, all exit 0: `tsc --noEmit`; `typecheck:tests` (`1764 files checked; 237 baseline diagnostics in 85 files; no regression`); `lint` (`1846 files scanned; 556 baseline violations in 394 files across 421 rule/file entries; no regression`); `fallow:ci` (0 dead-code, 0 complexity, 0 duplication introduced); `build`.
+
+**Defects verification found, and what the branch did about them:**
+
+- `pnpm run typecheck:tests` was RED at `c5c98a2a2f081910011dda6f4f78b4667e7e9e19`: two branch-added test files left `exportOkf`'s `Promise<unknown>` unnarrowed. Repaired in `f0285234cfa2c1ac50dc995be09109cb08f3e9b6`, inside the tests — no contract change.
+- Known blemish, recorded rather than hidden: the intermediate commit `ccad156d431d01d1a2cbc215aa04531c64deaf85` added a test file without re-freezing `test/module-graph-crawl.test.ts`, so that ONE commit is red on the pair oracle until `c5c98a2a` re-freezes it at 30. No commit is red at the branch tip.
+
+**Deliberate limit of this evidence:** the no-database scenario is pinned by `test/sdk/two-stack-env-guard.test.ts` — observed rejecting a void proof — and not by executing a run without a database, because `LLMWIKI_TEST_ALLOW_NO_DATABASE` is forbidden by the standing constraints (S6, S13).
